@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Field Service Resource Updater</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --red: #EE163B; --red-btn: #D4123A; --charcoal: #2B2B2B; --ink: #1c1c1c;
+    --line: #e3e3e3; --bg: #f5f6f8; --ok: #1a7f37; --warn: #b35900; --err: #c4314b;
+  }
+  * { box-sizing: border-box; }
+  :focus-visible { outline: 2px solid var(--red); outline-offset: 2px; border-radius: 4px; }
+  button:not(:disabled):hover { filter: brightness(0.92); }
+  input::placeholder { color: #8a8f98; opacity: 1; }
+  body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; background: var(--bg); color: var(--ink); }
+  header { background: var(--charcoal); color: #fff; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header .logo { width: 32px; height: 32px; flex: 0 0 auto; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .author { color: #9a9a9a; font-size: 12px; font-style: italic; }
+  header #envlabel { color: #bbb; font-size: 13px; margin-left: auto; }
+  /* busy spinner — shows while loading / applying */
+  .spinner { width: 18px; height: 18px; flex: 0 0 auto; margin-left: 14px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.25); border-top-color: var(--red); animation: spin .8s linear infinite; }
+  .spinner[hidden] { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-top-color: #fff; } }
+  body[data-host="xtb"] .spinner { border-color: #808080; border-top-color: #000080; }
+  header .ver { color: #8a8a8a; font-size: 12px; margin-left: 14px; padding: 2px 8px; border: 1px solid #4a4a4a; border-radius: 20px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 18px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #666; margin: 0 0 14px; }
+  .card h3 { font-size: 13px; margin: 18px 0 8px; color: var(--charcoal); }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
+  label.inline { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; margin: 0; }
+  input[type=text], input[type=number], input[type=time], select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; font-size: 13px; font-family: inherit; background: #fff; color: var(--ink);
+  }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 200px; }
+  .hint { font-size: 12px; color: #777; margin-top: 4px; }
+  .btnbar { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  button { padding: 10px 18px; border: 0; border-radius: 7px; font-size: 14px; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .primary { background: var(--charcoal); color: #fff; }
+  .danger { background: var(--red-btn); color: #fff; }
+  .ghost { background: #eee; color: #333; }
+  .small { padding: 7px 13px; font-size: 13px; }
+  #status, #qaStatus { font-size: 13px; color: #666; }
+  .banner { border-left: 4px solid var(--red); background: #fff5f6; padding: 12px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
+  .warnbox { border-left: 4px solid var(--warn); background: #fff7ea; padding: 11px 13px; border-radius: 6px; font-size: 13px; margin: 4px 0 14px; font-weight: 600; }
+  .errbox { border-left: 4px solid var(--err); background: #fdecef; padding: 11px 13px; border-radius: 6px; font-size: 13px; margin: 4px 0 14px; font-weight: 600; }
+  body.theme-dark .warnbox { background: #2a2316; } body.theme-dark .errbox { background: #2a1820; }
+  body[data-host="xtb"] .warnbox { background: #fff0d0; border-left: 4px solid #7a4a00; border-radius: 0; color: #000; }
+  body[data-host="xtb"] .errbox { background: #ffe0e0; border-left: 4px solid #a80000; border-radius: 0; color: #000; }
+  #log { background: #1e1e1e; color: #d4d4d4; font-family: 'Cascadia Code', Consolas, monospace; font-size: 12px;
+         border-radius: 8px; padding: 12px; height: 220px; overflow: auto; white-space: pre-wrap; margin-top: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+  th { background: #fafafa; position: sticky; top: 0; z-index: 1; }
+  td.wrap, th.wrap { white-space: normal; }
+  .tablewrap { max-height: 440px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .toolbar { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar > div { min-width: 180px; }
+  .selcount { font-weight: 700; color: var(--charcoal); }
+  .fieldgrid { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .fieldrow { display: grid; grid-template-columns: 230px 1fr; gap: 14px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+  .fieldrow.off { opacity: .5; }
+  .fieldrow .ctl { min-width: 0; }
+  .ouwrap { display: flex; gap: 8px; align-items: center; }
+  .ouwrap select { flex: 1; min-width: 0; }
+  .ouwrap button { flex: 0 0 auto; white-space: nowrap; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .pill.ok { background: #e6f4ea; color: var(--ok); }
+  .pill.warn { background: #fff3e0; color: var(--warn); }
+  .pill.bad { background: #fdecef; color: var(--err); }
+  body.theme-dark .pill.bad { background: #2a1820; }
+  body[data-host="xtb"] .pill.bad { background: #ffe0e0; color: #a80000; }
+  .daypick { display: flex; gap: 6px; flex-wrap: wrap; }
+  .daypick label { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; margin: 0; padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px; }
+  details.box { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; background: #f7f9fc; }
+  details.box > summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--charcoal); }
+  details.box[open] > summary { margin-bottom: 8px; }
+  .modewrap { margin-top: 8px; }
+  .changeitem { padding: 6px 0; border-top: 1px dashed #eee; font-size: 13px; }
+  .changeitem:first-child { border-top: 0; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 12px; padding: 12px 14px; }
+  legend { font-weight: 700; font-size: 13px; padding: 0 6px; }
+
+  /* Dark theme — PPTB default. */
+  body.theme-dark { color-scheme: dark; --ink: #e6e6e6; --line: #3a3b42; --bg: #17181c; --ok: #4ec77a; --warn: #e3a857; --err: #ff6b81; }
+  body.theme-dark .card, body.theme-dark fieldset { background: #25262b; }
+  body.theme-dark .card h2 { color: #9aa0a6; }
+  body.theme-dark .card h3, body.theme-dark legend { color: #e6e6e6; }
+  body.theme-dark label { color: #e6e6e6; }
+  body.theme-dark input[type=text], body.theme-dark input[type=number], body.theme-dark input[type=time], body.theme-dark select {
+    background: #1e1f24; color: var(--ink); border-color: var(--line); }
+  body.theme-dark select option { background: #1e1f24; color: var(--ink); }
+  body.theme-dark .hint, body.theme-dark #status, body.theme-dark #qaStatus { color: #9aa0a6; }
+  body.theme-dark th { background: #2c2d33; }
+  body.theme-dark th, body.theme-dark td { border-color: var(--line); }
+  body.theme-dark .tablewrap, body.theme-dark .fieldrow, body.theme-dark .daypick label { border-color: var(--line); }
+  body.theme-dark .ghost { background: #3a3b42; color: #e6e6e6; }
+  body.theme-dark .banner { background: #2a1e22; }
+  body.theme-dark details.box { background: #1f2127; border-color: var(--line); }
+
+  /* Windows 95 theme — XrmToolBox WebView2 host. */
+  body[data-host="xtb"] { background: #008080; color: #000; font-family: 'MS Sans Serif', Tahoma, 'Segoe UI', sans-serif; font-size: 12px; }
+  body[data-host="xtb"] main { max-width: none; }
+  body[data-host="xtb"] header { background: linear-gradient(90deg, #000080, #1084d0); color: #fff; border-bottom: 2px solid #c0c0c0; }
+  body[data-host="xtb"] header .author { color: #dfe7ff; }
+  body[data-host="xtb"] header #envlabel, body[data-host="xtb"] header .ver { color: #dfe7ff; border-color: #5a7fd0; }
+  body[data-host="xtb"] .card, body[data-host="xtb"] fieldset { background: #c0c0c0; border: 2px solid; border-color: #fff #000 #000 #fff; border-radius: 0; padding: 3px 8px 12px; }
+  body[data-host="xtb"] .card h2 { background: linear-gradient(90deg, #000080, #1084d0); color: #fff; text-transform: none; letter-spacing: 0; margin: -3px -8px 10px; padding: 3px 6px; }
+  body[data-host="xtb"] .card h3, body[data-host="xtb"] legend { color: #000; }
+  body[data-host="xtb"] label { font-weight: 700; color: #000; }
+  body[data-host="xtb"] .hint, body[data-host="xtb"] #status, body[data-host="xtb"] #qaStatus { color: #303030; }
+  body[data-host="xtb"] input[type=text], body[data-host="xtb"] input[type=number], body[data-host="xtb"] input[type=time], body[data-host="xtb"] select {
+    background: #fff; color: #000; border: 2px solid; border-color: #808080 #fff #fff #808080; border-radius: 0; }
+  body[data-host="xtb"] button { background: #c0c0c0; color: #000; border: 2px solid; border-color: #fff #000 #000 #fff; border-radius: 0; box-shadow: inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 #808080; font-weight: 400; }
+  body[data-host="xtb"] button:active:not(:disabled) { border-color: #808080 #fff #fff #808080; box-shadow: inset 1px 1px 0 #000; }
+  body[data-host="xtb"] .primary { font-weight: 700; outline: 1px solid #000; outline-offset: -5px; }
+  body[data-host="xtb"] .danger { font-weight: 700; color: #a80000; }
+  body[data-host="xtb"] th { background: #c0c0c0; color: #000; border: 2px solid; border-color: #fff #808080 #808080 #fff; }
+  body[data-host="xtb"] .tablewrap, body[data-host="xtb"] .fieldrow, body[data-host="xtb"] .daypick label { border: 2px solid; border-color: #808080 #fff #fff #808080; border-radius: 0; background: #fff; }
+  body[data-host="xtb"] details.box { background: #c0c0c0; border: 2px solid; border-color: #fff #000 #000 #fff; border-radius: 0; }
+  body[data-host="xtb"] details.box > summary { color: #000; font-weight: 700; }
+  body[data-host="xtb"] .banner { background: #fffbe0; border-left: 4px solid #a80000; border-radius: 0; color: #000; }
+  body[data-host="xtb"] #log { background: #000; color: #0f0; border: 2px solid; border-color: #808080 #fff #fff #808080; border-radius: 0; font-family: 'Lucida Console', Consolas, monospace; }
+  body[data-host="xtb"] :focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
+  body[data-host="xtb"] .pill.ok { background: #d6f0db; color: #006400; }
+  body[data-host="xtb"] .pill.warn { background: #fff0d0; color: #7a4a00; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<script>
+  /* Host detection + default theme (runs before content paints to avoid a flash).
+     PPTB → dark by default; XrmToolBox (WebView2) → Windows 95; web/standalone → light (OS dark honoured). */
+  (function () {
+    var P = !!window.dataverseAPI, X = !!window.XTB_CONFIG;
+    var host = P ? "pptb" : X ? "xtb" : "web";
+    document.body.dataset.host = host;
+    if (host === "pptb") document.body.classList.add("theme-dark");
+    else if (host === "web" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+      document.body.classList.add("theme-dark");
+  })();
+</script>
+<header>
+  <svg class="logo" viewBox="0 0 80 80" aria-hidden="true">
+    <rect x="2" y="2" width="76" height="76" rx="14" fill="#EE163B"/>
+    <g fill="#fff">
+      <circle cx="40" cy="40" r="25"/>
+      <rect x="36" y="4" width="8" height="15" rx="2"/>
+      <rect x="36" y="4" width="8" height="15" rx="2" transform="rotate(45 40 40)"/>
+      <rect x="36" y="4" width="8" height="15" rx="2" transform="rotate(90 40 40)"/>
+      <rect x="36" y="4" width="8" height="15" rx="2" transform="rotate(135 40 40)"/>
+      <rect x="36" y="4" width="8" height="15" rx="2" transform="rotate(180 40 40)"/>
+      <rect x="36" y="4" width="8" height="15" rx="2" transform="rotate(225 40 40)"/>
+      <rect x="36" y="4" width="8" height="15" rx="2" transform="rotate(270 40 40)"/>
+      <rect x="36" y="4" width="8" height="15" rx="2" transform="rotate(315 40 40)"/>
+    </g>
+    <circle cx="40" cy="40" r="17" fill="#EE163B"/>
+    <g fill="#fff"><circle cx="40" cy="35" r="7"/><path d="M30 52 a10 10 0 0 1 20 0 Z"/></g>
+  </svg>
+  <h1>Field Service Resource Updater</h1>
+  <span class="author">by Mark Christie</span>
+  <span id="spin" class="spinner" role="status" aria-label="Working" title="Working…" hidden></span>
+  <span id="envlabel">resolving environment…</span>
+  <span class="ver" id="verlabel" title="Tool build / Dataverse org version">v…</span>
+</header>
+
+<main>
+  <div class="banner">
+    <b>Bulk-edit Bookable Resource settings.</b> Pick resources, choose which settings to change, then
+    <b>Preview</b> before applying. Skills and territories can be added or removed for everyone selected.
+    Only the fields you tick are written — everything else is left untouched.
+  </div>
+
+  <!-- ============================== 1. SELECT RESOURCES ============================== -->
+  <div class="card">
+    <h2>1 · Select resources</h2>
+    <div class="toolbar">
+      <div>
+        <label for="typeFilter">Resource type</label>
+        <select id="typeFilter" title="Filter by bookable resource type">
+          <option value="3" selected>User</option>
+          <option value="2">Contact</option>
+          <option value="4">Equipment</option>
+          <option value="5">Account</option>
+          <option value="6">Crew</option>
+          <option value="7">Facility</option>
+          <option value="8">Pool</option>
+          <option value="1">Generic</option>
+          <option value="">All types</option>
+        </select>
+      </div>
+      <div>
+        <label for="nameFilter">Name contains</label>
+        <input type="text" id="nameFilter" placeholder="(optional)" autocomplete="off" />
+      </div>
+      <div style="flex:0 0 auto">
+        <button type="button" class="primary small" id="loadBtn">Load resources</button>
+      </div>
+      <div style="flex:0 0 auto">
+        <span class="selcount" id="selcount">0 selected</span>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table id="resTable">
+        <thead><tr>
+          <th><input type="checkbox" id="selAll" title="Select all loaded" aria-label="Select all loaded resources" /></th>
+          <th class="wrap">Name</th>
+          <th>Type</th>
+          <th title="Address / geocode on the related User, Contact or Account record">Address</th>
+          <th class="wrap">Org Unit</th>
+          <th>Start loc</th>
+          <th>End loc</th>
+          <th>Board</th>
+          <th>Avail.</th>
+          <th>Hourly</th>
+          <th>Time-off appr.</th>
+        </tr></thead>
+        <tbody><tr><td colspan="11" style="white-space:normal;color:#888;padding:18px">Load resources to begin.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============================== 2. FIELD SETTINGS ============================== -->
+  <div class="card">
+    <h2>2 · Settings to apply</h2>
+    <p class="hint" style="margin-top:0">Tick a setting to include it in the bulk update (changing a control ticks it for you). Unticked settings are not changed.</p>
+    <p class="hint" style="margin-top:0">⚠ <b>Start &amp; End Location are linked:</b> if either is set to <i>Location Agnostic</i>, Field Service requires the other to be <i>Location Agnostic</i> too. <i>Resource Address</i> needs a geocoded address on the related record; <i>Organizational Unit Address</i> needs the org unit to have an address. The preview checks all of this per resource (see the Address column).</p>
+    <div class="fieldgrid" id="fieldGrid"><!-- field rows injected --></div>
+  </div>
+
+  <!-- ============================== 3. WORK HOURS ============================== -->
+  <div class="card">
+    <h2>3 · Work hours <span class="pill warn">advanced</span></h2>
+    <label class="inline"><input type="checkbox" id="whInclude" /> Include work hours in this update</label>
+    <div class="hint">Work hours are stored as a calendar (recurring rules), set via the Field Service <code>msdyn_SaveCalendar</code> API.</div>
+    <div class="modewrap" id="whBody" hidden>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:0 0 auto">
+          <label class="inline"><input type="radio" name="whMode" value="weekly" checked /> Weekly pattern</label>
+        </div>
+        <div style="flex:0 0 auto">
+          <label class="inline"><input type="radio" name="whMode" value="copy" /> Copy from a resource</label>
+        </div>
+        <div style="flex:0 0 auto">
+          <label class="inline"><input type="checkbox" id="whClear" checked /> Clear existing work hours first</label>
+        </div>
+      </div>
+
+      <fieldset id="whWeekly">
+        <legend>Weekly pattern</legend>
+        <label>Working days</label>
+        <div class="daypick" id="dayPick"></div>
+        <div class="row">
+          <div><label for="whStart">Start time</label><input type="time" id="whStart" value="09:00" /></div>
+          <div><label for="whEnd">End time</label><input type="time" id="whEnd" value="17:00" /></div>
+          <div>
+            <label for="whCapacity">Capacity</label>
+            <input type="number" id="whCapacity" value="1" min="0" step="1" />
+            <div class="hint">Times the resource can be booked per slot.</div>
+          </div>
+        </div>
+        <label class="inline" style="margin-top:12px"><input type="checkbox" id="whBreak" /> Add a daily break</label>
+        <div class="row" id="whBreakBox" hidden>
+          <div><label for="whBreakStart">Break start</label><input type="time" id="whBreakStart" value="12:00" /></div>
+          <div><label for="whBreakEnd">Break end</label><input type="time" id="whBreakEnd" value="12:30" /></div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="whTz">Time zone</label>
+            <select id="whTz" title="Time zone for the work-hours calendar"></select>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset id="whCopy" hidden>
+        <legend>Copy from a resource</legend>
+        <label for="whSource">Source resource</label>
+        <select id="whSource"><option value="">— load resources first —</option></select>
+        <div class="hint">
+          Reads the source's work-hour calendar for a representative week and recreates that weekly
+          pattern (working hours + breaks, in UTC) on every selected resource. Irregular per-date
+          overrides on the source are not copied.
+        </div>
+      </fieldset>
+    </div>
+  </div>
+
+  <!-- ============================== 4. RUN ============================== -->
+  <div class="card">
+    <h2>4 · Apply settings &amp; work hours</h2>
+    <div class="btnbar">
+      <button type="button" class="primary" id="previewBtn">Preview changes</button>
+      <button type="button" class="danger" id="applyBtn" disabled>Apply to selected</button>
+      <span id="status" role="status" aria-live="polite"></span>
+    </div>
+    <div id="previewBox" style="margin-top:14px"></div>
+  </div>
+
+  <!-- ============================== 5. SKILLS & TERRITORIES ============================== -->
+  <div class="card">
+    <h2>5 · Quick actions — skills &amp; territories</h2>
+    <p class="hint" style="margin-top:0">These act immediately on the resources selected above. Remove asks you to click twice to confirm.</p>
+
+    <fieldset>
+      <legend>Skill (characteristic)</legend>
+      <div class="row">
+        <div>
+          <label for="charSel">Characteristic</label>
+          <select id="charSel"><option value="">— load —</option></select>
+        </div>
+        <div>
+          <label for="ratingSel">Rating value <span style="font-weight:400;color:#8a8f98">(optional)</span></label>
+          <select id="ratingSel"><option value="">(none)</option></select>
+        </div>
+        <div style="flex:0 0 auto; display:flex; align-items:end; gap:8px">
+          <button type="button" class="primary small" id="addSkillBtn">Add to selected</button>
+          <button type="button" class="danger small" id="removeSkillBtn">Remove from selected</button>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Territory</legend>
+      <div class="row">
+        <div>
+          <label for="terrSel">Territory</label>
+          <select id="terrSel"><option value="">— load —</option></select>
+        </div>
+        <div style="flex:0 0 auto; display:flex; align-items:end; gap:8px">
+          <button type="button" class="primary small" id="addTerrBtn">Add to selected</button>
+          <button type="button" class="danger small" id="removeTerrBtn">Remove from selected</button>
+        </div>
+      </div>
+    </fieldset>
+    <div class="btnbar"><span id="qaStatus" role="status" aria-live="polite"></span></div>
+  </div>
+
+  <div class="card">
+    <h2>Activity log</h2>
+    <div id="log" aria-live="polite"></div>
+  </div>
+</main>
+
+<script>
+"use strict";
+/* ============================================================================
+   Field Service Resource Updater — single-file, host-aware tool.
+   Hosts: PPTB (window.dataverseAPI) · XrmToolBox WebView2 (window.XTB_CONFIG) ·
+   D365 web resource (same-origin fetch). See docs/ARCHITECTURE.md.
+   ============================================================================ */
+const APP_VERSION = "1.0.0";
+const API_VER = "v9.2";
+
+const PPTB = (typeof window !== "undefined") && !!window.dataverseAPI;
+const XTB  = (typeof window !== "undefined") && !!window.XTB_CONFIG;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const $ = id => document.getElementById(id);
+
+// ---------- environment bootstrap ----------
+let ORG_BASE = "";
+(function initEnv() {
+  $("verlabel").textContent = "v" + APP_VERSION;
+  const el = $("envlabel");
+  if (XTB) {
+    ORG_BASE = (window.XTB_CONFIG.baseUrl || "").replace(/\/+$/, "");
+    el.textContent = ORG_BASE ? ORG_BASE.replace(/^https:\/\//, "") : "XrmToolBox";
+    return;
+  }
+  if (PPTB && window.toolboxAPI && window.toolboxAPI.connections) {
+    el.textContent = "connected";
+    try {
+      Promise.resolve(window.toolboxAPI.connections.getActiveConnection()).then(c => {
+        if (!c) return;
+        ORG_BASE = pickOrgUrl(c) || ORG_BASE;   // resolve org URL for record deep-links
+        const name = c.name || c.environment || c.url;
+        if (name) el.textContent = String(name).replace(/^https:\/\//, "");
+      }).catch(() => {});
+      window.toolboxAPI.events.on((e, payload) => {
+        if (payload && payload.event === "connection:updated") location.reload();
+      });
+    } catch (e) {}
+    return;
+  }
+  let url = "";
+  try {
+    if (window.parent && window.parent.Xrm) url = window.parent.Xrm.Utility.getGlobalContext().getClientUrl();
+    else if (window.Xrm) url = window.Xrm.Utility.getGlobalContext().getClientUrl();
+  } catch (e) {}
+  ORG_BASE = url || "";
+  el.textContent = url ? url.replace("https://", "") : "same-origin";
+})();
+
+function log(msg) {
+  const el = $("log");
+  const t = new Date().toISOString().substr(11, 8);
+  el.textContent += `[${t}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(s) { $("status").textContent = s; }
+function setQaStatus(s) { $("qaStatus").textContent = s; }
+function notify(title, body, type) {
+  try {
+    if (PPTB && window.toolboxAPI && window.toolboxAPI.utils)
+      window.toolboxAPI.utils.showNotification({ title, body: body || "", type: type || "info", duration: 4000 });
+  } catch (e) {}
+}
+function escapeHtml(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// Find a dynamics URL on the PPTB connection object (field name varies across versions).
+function pickOrgUrl(c) {
+  const cands = [c.url, c.environmentUrl, c.instanceUrl, c.apiUrl, c.resourceUrl, c.environment];
+  for (const v of cands) if (typeof v === "string" && /^https:\/\/.+\.dynamics\.com/i.test(v)) return v.replace(/\/+$/, "");
+  return "";
+}
+// Open a record's form in the right place per host (new browser tab / connection browser).
+function recordUrl(etn, id) {
+  const base = ORG_BASE ? ORG_BASE.replace(/\/+$/, "") : "";
+  return `${base}/main.aspx?etn=${encodeURIComponent(etn)}&id=${encodeURIComponent(id)}&pagetype=entityrecord`;
+}
+async function openRecord(etn, id) {
+  if (!id) return;
+  const url = recordUrl(etn, id);
+  try {
+    if (PPTB && window.toolboxAPI && window.toolboxAPI.utils && window.toolboxAPI.utils.openInConnectionBrowser) {
+      await window.toolboxAPI.utils.openInConnectionBrowser(url); return;
+    }
+  } catch (e) { /* fall through to window.open */ }
+  window.open(url, "_blank", "noopener");
+}
+
+// ---------- Web API plumbing (host-agnostic) ----------
+function baseUrl() {
+  if (XTB && window.XTB_CONFIG.baseUrl) return window.XTB_CONFIG.baseUrl.replace(/\/+$/, "") + `/api/data/${API_VER}`;
+  return `/api/data/${API_VER}`;
+}
+function headers(extra) {
+  const h = {
+    "Accept": "application/json", "OData-MaxVersion": "4.0", "OData-Version": "4.0",
+    "Content-Type": "application/json; charset=utf-8",
+  };
+  if (XTB && window.XTB_CONFIG.token) h["Authorization"] = "Bearer " + window.XTB_CONFIG.token;
+  return Object.assign(h, extra || {});
+}
+function relPath(p) { const m = p.match(/\/api\/data\/v9\.\d+\/(.*)$/); return (m ? m[1] : p).replace(/^\//, ""); }
+
+// GET a query path like "bookableresources?$select=..." → { value: [...] } (single page).
+async function dvQuery(pathWithQuery, extraHeaders) {
+  if (PPTB) return await window.dataverseAPI.queryData(relPath(pathWithQuery));
+  const r = await fetch(`${baseUrl()}/${relPath(pathWithQuery)}`, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin" });
+  if (!r.ok) throw new Error(`GET ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  return r.json();
+}
+// GET following @odata.nextLink until exhausted.
+async function dvQueryAll(pathWithQuery, extraHeaders) {
+  const out = [];
+  if (PPTB) {
+    const d = await window.dataverseAPI.queryData(relPath(pathWithQuery));
+    return (d.value || []);
+  }
+  let url = `${baseUrl()}/${relPath(pathWithQuery)}`;
+  while (url) {
+    const r = await fetch(url, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin" });
+    if (!r.ok) throw new Error(`GET ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    const d = await r.json();
+    out.push(...(d.value || []));
+    url = d["@odata.nextLink"] || null;
+  }
+  return out;
+}
+async function dvUpdate(logicalName, entitySet, id, patch) {
+  if (PPTB) { await window.dataverseAPI.update(logicalName, id, patch); return; }
+  const r = await fetch(`${baseUrl()}/${entitySet}(${id})`, { method: "PATCH", credentials: "same-origin", headers: headers({ "If-Match": "*" }), body: JSON.stringify(patch) });
+  if (!r.ok) throw new Error(await errText(r));
+}
+async function dvCreate(logicalName, entitySet, record) {
+  if (PPTB) { const res = await window.dataverseAPI.create(logicalName, record); return res && (res.id || res); }
+  const r = await fetch(`${baseUrl()}/${entitySet}`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify(record) });
+  if (!r.ok) throw new Error(await errText(r));
+  const loc = r.headers.get("OData-EntityId") || "";
+  const m = loc.match(/\(([0-9a-f-]{36})\)/i); return m ? m[1] : null;
+}
+async function dvDelete(logicalName, entitySet, id) {
+  if (PPTB) { await window.dataverseAPI.delete(logicalName, id); return; }
+  const r = await fetch(`${baseUrl()}/${entitySet}(${id})`, { method: "DELETE", credentials: "same-origin", headers: headers() });
+  if (!r.ok) throw new Error(await errText(r));
+}
+// Clear a single-valued lookup (web/XTB use the $ref DELETE; PPTB falls back to a null bind).
+async function dvClearLookup(logicalName, entitySet, id, navProperty, bindField) {
+  if (PPTB) { await window.dataverseAPI.update(logicalName, id, { [bindField + "@odata.bind"]: null }); return; }
+  const r = await fetch(`${baseUrl()}/${entitySet}(${id})/${navProperty}/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers() });
+  if (!r.ok && r.status !== 404) throw new Error(await errText(r));
+}
+// Unbound action (e.g. msdyn_SaveCalendar / msdyn_DeleteCalendar / msdyn_LoadCalendars).
+async function dvAction(name, params) {
+  if (PPTB) return await window.dataverseAPI.execute({ operationName: name, operationType: "action", parameters: params || {} });
+  const r = await fetch(`${baseUrl()}/${name}`, { method: "POST", credentials: "same-origin", headers: headers({ "Prefer": 'odata.include-annotations="*"' }), body: JSON.stringify(params || {}) });
+  if (!r.ok) throw new Error(await errText(r));
+  const txt = await r.text(); return txt ? JSON.parse(txt) : {};
+}
+async function errText(r) {
+  let msg = `${r.status}`;
+  try { const j = JSON.parse(await r.text()); msg = (j.error && j.error.message) ? j.error.message : msg; } catch (e) {}
+  return msg;
+}
+
+// ============================================================================
+//  Field definitions — the 7 scalar Bookable Resource settings.
+// ============================================================================
+const START_LOC_OPTS = [
+  { v: 690970000, t: "Resource Address" },
+  { v: 690970001, t: "Organizational Unit Address" },
+  { v: 690970002, t: "Location Agnostic" },
+];
+const YESNO = [{ v: "true", t: "Yes" }, { v: "false", t: "No" }];
+
+const FIELDS = [
+  { key: "msdyn_startlocation",            label: "Start Location",                kind: "picklist", opts: START_LOC_OPTS },
+  { key: "msdyn_endlocation",              label: "End Location",                  kind: "picklist", opts: START_LOC_OPTS },
+  { key: "msdyn_organizationalunit",       label: "Organizational Unit",           kind: "orgunit" },
+  { key: "msdyn_displayonscheduleboard",   label: "Display on Schedule Board",     kind: "bool" },
+  { key: "msdyn_displayonscheduleassistant", label: "Enable for Availability Search", kind: "bool" },
+  { key: "msdyn_hourlyrate",               label: "Hourly Rate",                   kind: "number" },
+  { key: "msdyn_timeoffapprovalrequired",  label: "Time Off Approval Required",    kind: "bool" },
+];
+const ORGUNIT_NAV = "msdyn_OrganizationalUnit";   // navigation property for the bind / $ref
+
+// Lookups for display
+const startLocLabel = v => { const o = START_LOC_OPTS.find(x => x.v === Number(v)); return o ? o.t : (v == null ? "—" : v); };
+const boolLabel = v => v === true ? "Yes" : v === false ? "No" : "—";
+const RES_TYPE = { 1: "Generic", 2: "Contact", 3: "User", 4: "Equipment", 5: "Account", 6: "Crew", 7: "Facility", 8: "Pool" };
+
+// ============================================================================
+//  State
+// ============================================================================
+let resources = [];                  // loaded bookable resources
+const selected = new Set();          // selected bookableresourceids
+let orgUnits = [];                   // { id, name }
+let chars = [];                      // characteristics
+let ratings = [];                    // rating values
+let territories = [];                // territories
+let metaLoaded = false;
+
+// Time-zone list (subset of the Field Service work-hour API codes; UK default).
+const TZ = [
+  [85, "(GMT) Dublin, Edinburgh, Lisbon, London"], [92, "(GMT) Coordinated Universal Time"],
+  [105, "(GMT+1) Brussels, Copenhagen, Madrid, Paris"], [110, "(GMT+1) Amsterdam, Berlin, Rome, Vienna"],
+  [35, "(GMT-5) Eastern Time (US & Canada)"], [20, "(GMT-6) Central Time (US & Canada)"],
+  [10, "(GMT-7) Mountain Time (US & Canada)"], [4, "(GMT-8) Pacific Time (US & Canada)"],
+  [190, "(GMT+5:30) Chennai, Kolkata, Mumbai, New Delhi"], [255, "(GMT+10) Canberra, Melbourne, Sydney"],
+];
+const DAYS = [["MO", "Mon", 1], ["TU", "Tue", 2], ["WE", "Wed", 3], ["TH", "Thu", 4], ["FR", "Fri", 5], ["SA", "Sat", 6], ["SU", "Sun", 0]];
+const ANCHOR = "2024-01-01";   // a Monday — anchor date for weekly recurrences
+
+// ============================================================================
+//  Build the field rows + work-hours controls
+// ============================================================================
+function buildFieldRows() {
+  const grid = $("fieldGrid");
+  grid.innerHTML = "";
+  for (const f of FIELDS) {
+    const row = document.createElement("div");
+    row.className = "fieldrow off";
+    row.dataset.key = f.key;
+    let ctl = "";
+    const cid = "f_" + f.key;
+    if (f.kind === "picklist") ctl = `<select id="${cid}">${f.opts.map(o => `<option value="${o.v}">${o.t}</option>`).join("")}</select>`;
+    else if (f.kind === "bool") ctl = `<select id="${cid}">${YESNO.map(o => `<option value="${o.v}">${o.t}</option>`).join("")}</select>`;
+    else if (f.kind === "number") ctl = `<input type="number" id="${cid}" step="0.01" min="0" placeholder="0.00" />`;
+    else if (f.kind === "orgunit") ctl = `<div class="ouwrap"><select id="${cid}"><option value="">— clear —</option></select>` +
+      `<button type="button" class="ghost small" id="ouOpenBtn" hidden title="This org unit has no address — open it to add one">⚠ No address — open ↗</button></div>`;
+    row.innerHTML =
+      `<label class="inline"><input type="checkbox" class="finc" data-key="${f.key}" /> ${escapeHtml(f.label)}</label>` +
+      `<div class="ctl">${ctl}</div>`;
+    grid.appendChild(row);
+  }
+  // Ticking the checkbox includes/excludes the field; controls stay usable either way.
+  grid.querySelectorAll(".finc").forEach(cb => cb.addEventListener("change", () => {
+    cb.closest(".fieldrow").classList.toggle("off", !cb.checked);
+  }));
+  // Changing (or focusing) a control auto-includes its field, so you can just pick a value.
+  grid.querySelectorAll(".ctl select, .ctl input").forEach(ctl => {
+    const include = () => {
+      const row = ctl.closest(".fieldrow");
+      const cb = row.querySelector(".finc");
+      if (!cb.checked) { cb.checked = true; row.classList.remove("off"); }
+    };
+    ctl.addEventListener("change", include);
+    ctl.addEventListener("input", include);
+  });
+}
+// Show the "open record" button when the chosen org unit has no address.
+function updateOrgOpenBtn() {
+  const sel = $("f_msdyn_organizationalunit"), btn = $("ouOpenBtn");
+  if (!sel || !btn) return;
+  const ou = orgUnits.find(o => o.id === sel.value);
+  btn.hidden = !(sel.value && ou && !ou.hasAddr);
+}
+function buildDayPick() {
+  const dp = $("dayPick");
+  dp.innerHTML = DAYS.map(d =>
+    `<label><input type="checkbox" class="dayck" value="${d[0]}" ${["MO","TU","WE","TH","FR"].includes(d[0]) ? "checked" : ""}/> ${d[1]}</label>`
+  ).join("");
+}
+function buildTz() {
+  $("whTz").innerHTML = TZ.map(t => `<option value="${t[0]}" ${t[0] === 85 ? "selected" : ""}>${escapeHtml(t[1])}</option>`).join("");
+}
+
+// ============================================================================
+//  Load resources + reference data
+// ============================================================================
+async function loadResources() {
+  try {
+    setBusy(true);
+    $("loadBtn").disabled = true;
+    setStatus(""); log("Loading resources…");
+    const type = $("typeFilter").value;
+    const name = $("nameFilter").value.trim().replace(/'/g, "''");
+    const filters = [];
+    if (type) filters.push(`resourcetype eq ${type}`);
+    if (name) filters.push(`contains(name,'${name}')`);
+    const flt = filters.length ? `&$filter=${encodeURIComponent(filters.join(" and "))}` : "";
+    const select = "$select=name,resourcetype,msdyn_startlocation,msdyn_endlocation,msdyn_displayonscheduleboard," +
+      "msdyn_displayonscheduleassistant,msdyn_hourlyrate,msdyn_timeoffapprovalrequired,_msdyn_organizationalunit_value,_calendarid_value," +
+      "_userid_value,_contactid_value,_accountid_value";
+    const path = `bookableresources?${select}${flt}&$orderby=name&$top=5000`;
+    const rows = await dvQueryAll(path, { "Prefer": 'odata.include-annotations="*",odata.maxpagesize=5000' });
+    resources = rows.map(r => ({
+      id: r.bookableresourceid,
+      name: r.name || "(no name)",
+      type: r.resourcetype,
+      calendarId: r._calendarid_value || null,
+      orgUnitId: r._msdyn_organizationalunit_value || null,
+      orgUnitName: r["_msdyn_organizationalunit_value@OData.Community.Display.V1.FormattedValue"] || (r._msdyn_organizationalunit_value ? "(set)" : ""),
+      startloc: r.msdyn_startlocation, endloc: r.msdyn_endlocation,
+      board: r.msdyn_displayonscheduleboard, avail: r.msdyn_displayonscheduleassistant,
+      hourly: r.msdyn_hourlyrate, timeoff: r.msdyn_timeoffapprovalrequired,
+      userId: r._userid_value || null, contactId: r._contactid_value || null, accountId: r._accountid_value || null,
+      addrState: "loading",
+    }));
+    selected.clear();
+    renderResources();
+    fillSourceSelect();
+    await enrichResourceAddresses(resources);   // resolve related-record address/geocode
+    renderResources();
+    log(`Loaded ${resources.length} resource(s).`);
+    setStatus(`${resources.length} loaded`);
+    if (!metaLoaded) loadReferenceData();
+  } catch (e) {
+    log("✖ Load failed: " + e.message);
+    notify("Load failed", e.message, "error");
+  } finally {
+    $("loadBtn").disabled = false;
+    setBusy(false);
+  }
+}
+
+// Resolve each resource's related User/Contact/Account address + geocode, so we can flag
+// resources that aren't ready for the "Resource Address" location option.
+// addrState: 'geo' (lat/long present) | 'text' (address but no geocode) | 'none' | 'na' (no related record).
+async function enrichResourceAddresses(list) {
+  const sets = {
+    systemusers: { idf: "systemuserid", ids: new Set() },
+    contacts:    { idf: "contactid",    ids: new Set() },
+    accounts:    { idf: "accountid",    ids: new Set() },
+  };
+  for (const r of list) {
+    if (r.userId) sets.systemusers.ids.add(r.userId);
+    if (r.contactId) sets.contacts.ids.add(r.contactId);
+    if (r.accountId) sets.accounts.ids.add(r.accountId);
+  }
+  const addr = {};   // related id -> { geo, text }
+  for (const set in sets) {
+    const { idf, ids } = sets[set];
+    const arr = [...ids];
+    for (let i = 0; i < arr.length; i += 20) {
+      const flt = arr.slice(i, i + 20).map(id => `${idf} eq ${id}`).join(" or ");
+      const rows = await dvQueryAll(`${set}?$select=${idf},address1_latitude,address1_longitude,address1_line1,address1_composite&$filter=${encodeURIComponent(flt)}`).catch(() => []);
+      for (const x of rows) addr[x[idf]] = {
+        geo: x.address1_latitude != null && x.address1_longitude != null,
+        text: !!(x.address1_line1 || x.address1_composite),
+      };
+    }
+  }
+  for (const r of list) {
+    const rid = r.userId || r.contactId || r.accountId;
+    if (!rid) { r.addrState = "na"; continue; }
+    const a = addr[rid];
+    r.addrState = !a ? "none" : a.geo ? "geo" : a.text ? "text" : "none";
+  }
+}
+const ADDR_CELL = {
+  geo:  '<span class="pill ok">✓ geo</span>',
+  text: '<span class="pill warn">no geo</span>',
+  none: '<span class="pill bad">⚠ none</span>',
+  na:   '<span class="hint">—</span>',
+  loading: '<span class="hint">…</span>',
+};
+
+function renderResources() {
+  const tb = $("resTable").querySelector("tbody");
+  tb.innerHTML = "";
+  if (!resources.length) {
+    tb.innerHTML = `<tr><td colspan="11" style="white-space:normal;color:#888;padding:18px">No resources match.</td></tr>`;
+    updateSelCount(); return;
+  }
+  for (const r of resources) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td><input type="checkbox" class="rowck" data-id="${r.id}" ${selected.has(r.id) ? "checked" : ""} aria-label="Select ${escapeHtml(r.name)}" /></td>` +
+      `<td class="wrap">${escapeHtml(r.name)}</td>` +
+      `<td>${escapeHtml(RES_TYPE[r.type] || r.type || "")}</td>` +
+      `<td>${ADDR_CELL[r.addrState] || ADDR_CELL.na}</td>` +
+      `<td class="wrap">${escapeHtml(r.orgUnitName || "—")}</td>` +
+      `<td>${escapeHtml(startLocLabel(r.startloc))}</td>` +
+      `<td>${escapeHtml(startLocLabel(r.endloc))}</td>` +
+      `<td>${boolLabel(r.board)}</td>` +
+      `<td>${boolLabel(r.avail)}</td>` +
+      `<td>${r.hourly == null ? "—" : escapeHtml(r.hourly)}</td>` +
+      `<td>${boolLabel(r.timeoff)}</td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll(".rowck").forEach(cb => cb.addEventListener("change", () => {
+    const id = cb.dataset.id;
+    if (cb.checked) selected.add(id); else selected.delete(id);
+    updateSelCount();
+  }));
+  updateSelCount();
+}
+function updateSelCount() {
+  $("selcount").textContent = `${selected.size} selected`;
+  const all = resources.length && resources.every(r => selected.has(r.id));
+  $("selAll").checked = all;
+}
+$("selAll").addEventListener("change", () => {
+  if ($("selAll").checked) resources.forEach(r => selected.add(r.id));
+  else selected.clear();
+  renderResources();
+});
+
+function fillSourceSelect() {
+  const withCal = resources.filter(r => r.calendarId);
+  $("whSource").innerHTML = `<option value="">— select source resource —</option>` +
+    withCal.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join("");
+}
+
+async function loadReferenceData() {
+  metaLoaded = true;
+  setBusy(true);
+  try {
+    log("Loading org units, characteristics, ratings, territories…");
+    const [ou, ch, rv, tr] = await Promise.all([
+      dvQueryAll("msdyn_organizationalunits?$select=msdyn_name,msdyn_organizationalunitid,msdyn_address1,msdyn_city,msdyn_postalcode,msdyn_latitude,msdyn_longitude&$orderby=msdyn_name").catch(() => []),
+      dvQueryAll("characteristics?$select=name,characteristicid,characteristictype&$orderby=name").catch(() => []),
+      dvQueryAll("ratingvalues?$select=name,value,ratingvalueid&$orderby=value").catch(() => []),
+      dvQueryAll("territories?$select=name,territoryid&$orderby=name").catch(() => []),
+    ]);
+    orgUnits = ou.map(x => ({
+      id: x.msdyn_organizationalunitid, name: x.msdyn_name || "(no name)",
+      geo: x.msdyn_latitude != null && x.msdyn_longitude != null,
+      hasAddr: (x.msdyn_latitude != null && x.msdyn_longitude != null) || !!(x.msdyn_address1 || x.msdyn_city || x.msdyn_postalcode),
+    }));
+    chars = ch.map(x => ({ id: x.characteristicid, name: x.name || "(no name)", type: x.characteristictype }));
+    ratings = rv.map(x => ({ id: x.ratingvalueid, name: x.name || x.value, value: x.value }));
+    territories = tr.map(x => ({ id: x.territoryid, name: x.name || "(no name)" }));
+
+    const ouSel = $("f_msdyn_organizationalunit");
+    ouSel.innerHTML = `<option value="">— clear —</option>` + orgUnits.map(o => `<option value="${o.id}">${escapeHtml(o.name)}${o.hasAddr ? "" : "  ⚠ no address"}</option>`).join("");
+    const ouNoAddr = orgUnits.filter(o => !o.hasAddr).length;
+    if (ouNoAddr) log(`⚠ ${ouNoAddr} of ${orgUnits.length} org unit(s) have no address — flagged in the Organizational Unit list.`);
+    updateOrgOpenBtn();
+    $("charSel").innerHTML = `<option value="">— select —</option>` + chars.map(c => `<option value="${c.id}">${escapeHtml(c.name)}${c.type === 2 ? " (cert)" : c.type === 1 ? " (skill)" : ""}</option>`).join("");
+    $("ratingSel").innerHTML = `<option value="">(none)</option>` + ratings.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join("");
+    $("terrSel").innerHTML = `<option value="">— select —</option>` + territories.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
+    log(`Reference data: ${orgUnits.length} org units, ${chars.length} characteristics, ${ratings.length} ratings, ${territories.length} territories.`);
+  } catch (e) {
+    metaLoaded = false;   // allow a retry on the next load
+    log("⚠ Some reference data failed to load: " + e.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ============================================================================
+//  Build the field-settings patch from the ticked rows
+// ============================================================================
+function collectFieldChanges() {
+  const patch = {};            // direct PATCH props
+  const clears = [];           // lookups to clear
+  const summary = [];          // [{label, value}]
+  document.querySelectorAll(".finc:checked").forEach(cb => {
+    const f = FIELDS.find(x => x.key === cb.dataset.key);
+    const ctl = $("f_" + f.key);
+    if (f.kind === "picklist") { patch[f.key] = Number(ctl.value); summary.push({ label: f.label, value: startLocLabel(ctl.value) }); }
+    else if (f.kind === "bool") { patch[f.key] = ctl.value === "true"; summary.push({ label: f.label, value: ctl.value === "true" ? "Yes" : "No" }); }
+    else if (f.kind === "number") {
+      const n = ctl.value === "" ? null : Number(ctl.value);
+      patch[f.key] = n; summary.push({ label: f.label, value: n == null ? "(empty)" : String(n) });
+    } else if (f.kind === "orgunit") {
+      if (ctl.value) { patch[ORGUNIT_NAV + "@odata.bind"] = `/msdyn_organizationalunits(${ctl.value})`; summary.push({ label: f.label, value: (orgUnits.find(o => o.id === ctl.value) || {}).name || "(set)" }); }
+      else { clears.push("orgunit"); summary.push({ label: f.label, value: "— clear —" }); }
+    }
+  });
+  return { patch, clears, summary };
+}
+
+// Field Service rule: Start Location and End Location must both be Location Agnostic, or
+// neither. Validate every selected resource against its effective (new-or-current) values.
+function checkLocationRule() {
+  const LA = 690970002;
+  const sCb = document.querySelector('.finc[data-key="msdyn_startlocation"]');
+  const eCb = document.querySelector('.finc[data-key="msdyn_endlocation"]');
+  const sInc = !!(sCb && sCb.checked), eInc = !!(eCb && eCb.checked);
+  if (!sInc && !eInc) return { block: false, warn: false, bad: 0 };
+  const sVal = sInc ? Number($("f_msdyn_startlocation").value) : null;
+  const eVal = eInc ? Number($("f_msdyn_endlocation").value) : null;
+  // both fields being set, but only one to Location Agnostic → always wrong, block.
+  if (sInc && eInc && ((sVal === LA) !== (eVal === LA)))
+    return { block: true, warn: false, bad: selected.size,
+      message: "Start Location and End Location must BOTH be ‘Location Agnostic’, or neither — Field Service rejects a mismatch. Set both to Location Agnostic, or pick non-agnostic values for both." };
+  // otherwise check each resource's effective values (new where included, current otherwise).
+  let bad = 0;
+  for (const id of selected) {
+    const r = resources.find(x => x.id === id); if (!r) continue;
+    const es = sInc ? sVal : (r.startloc == null ? null : Number(r.startloc));
+    const ee = eInc ? eVal : (r.endloc == null ? null : Number(r.endloc));
+    if ((es === LA) !== (ee === LA)) bad++;
+  }
+  if (bad) return { block: false, warn: true, bad,
+    message: `${bad} of ${selected.size} selected resource(s) would breach Field Service’s rule that Start and End Location must both be ‘Location Agnostic’ (or neither). To avoid failures, include BOTH location fields and give them matching values. You can still apply — those ${bad} will fail and be listed in the log.` };
+  return { block: false, warn: false, bad: 0 };
+}
+
+// Non-blocking readiness warnings for the address-based location options. "Resource Address"
+// needs a geocoded address on the related record; "Organizational Unit Address" needs the org
+// unit (and its address). Computed against the selected resources' effective values.
+function addressWarnings() {
+  const RA = 690970000, OUA = 690970001, warns = [];
+  const sCb = document.querySelector('.finc[data-key="msdyn_startlocation"]');
+  const eCb = document.querySelector('.finc[data-key="msdyn_endlocation"]');
+  const sInc = !!(sCb && sCb.checked), eInc = !!(eCb && eCb.checked);
+  const sVal = sInc ? Number($("f_msdyn_startlocation").value) : null;
+  const eVal = eInc ? Number($("f_msdyn_endlocation").value) : null;
+  const usingResourceAddr = (sInc && sVal === RA) || (eInc && eVal === RA);
+  const usingOrgUnitAddr = (sInc && sVal === OUA) || (eInc && eVal === OUA);
+
+  if (usingResourceAddr) {
+    let none = 0, nogeo = 0;
+    for (const id of selected) {
+      const r = resources.find(x => x.id === id); if (!r) continue;
+      if (r.addrState === "none" || r.addrState === "na") none++;
+      else if (r.addrState === "text") nogeo++;
+    }
+    if (none) warns.push(`${none} selected resource(s) have no address on their related User/Contact/Account record — “Resource Address” can’t resolve a location for them.`);
+    if (nogeo) warns.push(`${nogeo} selected resource(s) have an address that isn’t geocoded (no lat/long) — “Resource Address” needs a geocoded address. Geo-code the related record first.`);
+  }
+  if (usingOrgUnitAddr) {
+    const ouCb = document.querySelector('.finc[data-key="msdyn_organizationalunit"]');
+    const ouInc = !!(ouCb && ouCb.checked);
+    const ouNew = ouInc ? $("f_msdyn_organizationalunit").value : null;
+    let noOu = 0, noAddr = 0;
+    for (const id of selected) {
+      const r = resources.find(x => x.id === id); if (!r) continue;
+      const ouId = ouInc ? ouNew : r.orgUnitId;
+      if (!ouId) { noOu++; continue; }
+      const ou = orgUnits.find(o => o.id === ouId);
+      if (ou && !ou.hasAddr) noAddr++;
+    }
+    if (noOu) warns.push(`${noOu} selected resource(s) won’t have an Organizational Unit — “Organizational Unit Address” needs one. Set the Organizational Unit field too.`);
+    if (noAddr) warns.push(`${noAddr} selected resource(s) use an Organizational Unit that has no address — “Organizational Unit Address” can’t resolve a location.`);
+  }
+  return warns;
+}
+
+// ============================================================================
+//  Work hours — build CalendarEventInfo + apply
+// ============================================================================
+function anchorIso(hhmm) { return `${ANCHOR}T${hhmm}:00.000Z`; }
+
+function weeklyRules(startHHMM, endHHMM, capacity, brk) {
+  const rules = [];
+  if (brk && brk.start && brk.end) {
+    rules.push({ StartTime: anchorIso(startHHMM), EndTime: anchorIso(brk.start), Effort: capacity, WorkHourType: 0 });
+    rules.push({ StartTime: anchorIso(brk.start), EndTime: anchorIso(brk.end), Effort: null, WorkHourType: 1 });
+    rules.push({ StartTime: anchorIso(brk.end), EndTime: anchorIso(endHHMM), Effort: capacity, WorkHourType: 0 });
+  } else {
+    rules.push({ StartTime: anchorIso(startHHMM), EndTime: anchorIso(endHHMM), Effort: capacity, WorkHourType: 0 });
+  }
+  return rules;
+}
+function calEventInfo(calId, resId, tzCode, byday, rules) {
+  return JSON.stringify({
+    CalendarId: calId, EntityLogicalName: "bookableresource", TimeZoneCode: tzCode, UseV2: true,
+    ResourceId: resId,
+    RulesAndRecurrences: [{ Rules: rules, RecurrencePattern: `FREQ=WEEKLY;INTERVAL=1;BYDAY=${byday}` }],
+  });
+}
+
+// Read existing inner-calendar rule ids for a resource's calendar, and delete them.
+async function clearWorkHours(calId) {
+  let rules = [];
+  try {
+    const cal = await dvQuery(`calendars(${calId})?$expand=calendar_calendar_rules($select=innercalendarid)`);
+    rules = (cal && cal.calendar_calendar_rules) || [];
+  } catch (e) { return; }
+  const ids = new Set();
+  for (const r of rules) { const ic = r.innercalendarid || r._innercalendarid_value; if (ic) ids.add(ic); }
+  for (const ic of ids) {
+    try {
+      await dvAction("msdyn_DeleteCalendar", { CalendarEventInfo: JSON.stringify({ CalendarId: calId, EntityLogicalName: "bookableresource", InnerCalendarId: ic }) });
+    } catch (e) { /* a rule may already be gone — keep going */ }
+  }
+}
+
+// Derive weekly groups from a source calendar's slots for one representative week.
+async function deriveCopyGroups(sourceCalId) {
+  const startDate = `${ANCHOR}T00:00:00.000Z`, endDate = `2024-01-08T00:00:00.000Z`;
+  const res = await dvAction("msdyn_LoadCalendars", { LoadCalendarsInput: JSON.stringify({ StartDate: startDate, EndDate: endDate, CalendarIds: [sourceCalId] }) });
+  let events = {};
+  try { events = JSON.parse((res && res.CalendarEvents) || "{}"); } catch (e) { events = {}; }
+  const slots = events[sourceCalId] || events[sourceCalId.toLowerCase()] || [];
+  // group working slots by UTC weekday
+  const byDay = {};
+  for (const s of slots) {
+    if (!s.Start || !s.End) continue;
+    const d = new Date(s.Start).getUTCDay();         // 0=Sun..6=Sat
+    (byDay[d] = byDay[d] || []).push({ s: s.Start.substr(11, 5), e: s.End.substr(11, 5) });
+  }
+  Object.values(byDay).forEach(arr => arr.sort((a, b) => a.s.localeCompare(b.s)));
+  // signature → list of weekday codes
+  const dayCode = {}; DAYS.forEach(d => dayCode[d[2]] = d[0]);
+  const sigGroups = {};
+  for (const d in byDay) {
+    const sig = byDay[d].map(i => `${i.s}-${i.e}`).join("|");
+    (sigGroups[sig] = sigGroups[sig] || { days: [], intervals: byDay[d] }).days.push(dayCode[d]);
+  }
+  // build rules per group (working slots + breaks in the gaps)
+  return Object.values(sigGroups).map(g => {
+    const rules = [];
+    g.intervals.forEach((iv, i) => {
+      if (i > 0) rules.push({ StartTime: anchorIso(g.intervals[i - 1].e), EndTime: anchorIso(iv.s), Effort: null, WorkHourType: 1 });
+      rules.push({ StartTime: anchorIso(iv.s), EndTime: anchorIso(iv.e), Effort: 1, WorkHourType: 0 });
+    });
+    return { byday: g.days.join(","), rules };
+  });
+}
+
+// ============================================================================
+//  Preview + apply (fields + work hours)
+// ============================================================================
+let PLAN = null;
+
+async function preview() {
+  try {
+    setBusy(true);
+    PLAN = null; $("applyBtn").disabled = true;
+    if (!selected.size) { setStatus("Select at least one resource."); return; }
+    const fc = collectFieldChanges();
+    const whInclude = $("whInclude").checked;
+    const whMode = document.querySelector('input[name="whMode"]:checked').value;
+    if (!fc.summary.length && !whInclude) { setStatus("Tick at least one setting or include work hours."); return; }
+
+    // work hours summary
+    let whSummary = null, copyGroups = null;
+    if (whInclude) {
+      if (whMode === "weekly") {
+        const days = [...document.querySelectorAll(".dayck:checked")].map(c => c.value);
+        if (!days.length) { setStatus("Pick at least one working day."); return; }
+        const brk = $("whBreak").checked ? { start: $("whBreakStart").value, end: $("whBreakEnd").value } : null;
+        whSummary = `Weekly: ${days.join(", ")} ${$("whStart").value}–${$("whEnd").value}` +
+          (brk ? ` (break ${brk.start}–${brk.end})` : "") + `, capacity ${$("whCapacity").value}, TZ ${$("whTz").options[$("whTz").selectedIndex].text}`;
+      } else {
+        const src = $("whSource").value;
+        if (!src) { setStatus("Choose a source resource to copy from."); return; }
+        const srcRes = resources.find(r => r.id === src);
+        setStatus("Reading source work hours…");
+        copyGroups = await deriveCopyGroups(srcRes.calendarId);
+        whSummary = copyGroups.length
+          ? `Copy from “${srcRes.name}”: ${copyGroups.map(g => g.byday).join(" / ")} (${copyGroups.reduce((n, g) => n + g.rules.filter(r => r.WorkHourType === 0).length, 0)} working block(s))`
+          : `Copy from “${srcRes.name}”: source has no work hours in the sample week — nothing to copy.`;
+      }
+      if ($("whClear").checked) whSummary += " · existing work hours cleared first";
+    }
+
+    PLAN = { patch: fc.patch, clears: fc.clears, whInclude, whMode, whSummary, copyGroups };
+
+    // Pre-flight: Field Service requires Start & End Location to BOTH be Location Agnostic, or
+    // neither. Check every selected resource against its effective (new-or-current) values.
+    const loc = checkLocationRule();
+
+    // render
+    const box = $("previewBox");
+    let html = `<p><span class="selcount">${selected.size}</span> resource(s) will be updated.</p>`;
+    if (loc.block) html += `<div class="errbox">⛔ ${escapeHtml(loc.message)}</div>`;
+    else if (loc.warn) html += `<div class="warnbox">⚠ ${escapeHtml(loc.message)}</div>`;
+    addressWarnings().forEach(w => html += `<div class="warnbox">⚠ ${escapeHtml(w)}</div>`);
+    if (fc.summary.length) {
+      html += `<h3>Field changes</h3>`;
+      html += fc.summary.map(s => `<div class="changeitem"><b>${escapeHtml(s.label)}</b> → ${escapeHtml(s.value)}</div>`).join("");
+    } else html += `<p class="hint">No scalar field changes.</p>`;
+    if (whInclude) html += `<h3>Work hours</h3><div class="changeitem">${escapeHtml(whSummary)}</div>`;
+    box.innerHTML = html;
+    $("applyBtn").disabled = loc.block;
+    setStatus(loc.block ? "Fix the Location conflict before applying." : "Preview ready — review, then Apply.");
+    log(`Preview: ${selected.size} resource(s); ${fc.summary.length} field change(s)${whInclude ? "; work hours included" : ""}.` +
+      (loc.block ? "  ⛔ Location rule conflict — apply blocked." : loc.warn ? `  ⚠ ${loc.bad} resource(s) would breach the Location rule.` : ""));
+  } catch (e) {
+    log("✖ Preview failed: " + e.message);
+    setStatus("Preview failed — see log.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function applyAll() {
+  if (!PLAN) return;
+  if (!confirmTwice($("applyBtn"), "Apply to selected")) return;
+  try {
+    lockRun(true);
+    const ids = [...selected];
+    const hasFields = Object.keys(PLAN.patch).length || PLAN.clears.length;
+    let ok = 0, err = 0;
+    log(`Applying to ${ids.length} resource(s)…`);
+
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const r = resources.find(x => x.id === id);
+      try {
+        if (hasFields) {
+          if (Object.keys(PLAN.patch).length) await dvUpdate("bookableresource", "bookableresources", id, PLAN.patch);
+          if (PLAN.clears.includes("orgunit")) await dvClearLookup("bookableresource", "bookableresources", id, ORGUNIT_NAV, ORGUNIT_NAV);
+        }
+        if (PLAN.whInclude) await applyWorkHours(r);
+        ok++;
+      } catch (e) { err++; log(`  ✖ ${r ? r.name : id}: ${e.message}`); }
+      if ((i + 1) % 5 === 0 || i === ids.length - 1) setStatus(`Applied ${ok}/${ids.length}${err ? ` (${err} error${err > 1 ? "s" : ""})` : ""}`);
+    }
+    log(`Done. ${ok} succeeded, ${err} failed.`);
+    notify("Update complete", `${ok} resource(s) updated${err ? `, ${err} failed` : ""}.`, err ? "warning" : "success");
+    // refresh the grid so the new values show
+    await loadResources();
+  } catch (e) {
+    log("✖ Apply failed: " + e.message);
+  } finally {
+    lockRun(false);
+    $("applyBtn").disabled = true; PLAN = null;
+  }
+}
+
+async function applyWorkHours(r) {
+  if (!r.calendarId) { log(`  ⚠ ${r.name}: no calendar on resource — skipped work hours.`); return; }
+  if ($("whClear").checked) await clearWorkHours(r.calendarId);
+  const tz = Number($("whTz").value);
+  const resId = r.id;
+  if (PLAN.whMode === "weekly") {
+    const days = [...document.querySelectorAll(".dayck:checked")].map(c => c.value).join(",");
+    const brk = $("whBreak").checked ? { start: $("whBreakStart").value, end: $("whBreakEnd").value } : null;
+    const rules = weeklyRules($("whStart").value, $("whEnd").value, Number($("whCapacity").value) || 1, brk);
+    await dvAction("msdyn_SaveCalendar", { CalendarEventInfo: calEventInfo(r.calendarId, resId, tz, days, rules) });
+  } else {
+    const groups = PLAN.copyGroups || [];
+    for (const g of groups) {
+      // copied slots are in UTC → write with TimeZoneCode 92 (UTC) to preserve absolute times
+      await dvAction("msdyn_SaveCalendar", { CalendarEventInfo: calEventInfo(r.calendarId, resId, 92, g.byday, g.rules) });
+    }
+  }
+}
+
+// ============================================================================
+//  Quick actions — skills (characteristics) + territories
+// ============================================================================
+async function addSkill() {
+  const cid = $("charSel").value; if (!cid) { setQaStatus("Pick a characteristic."); return; }
+  if (!selected.size) { setQaStatus("Select resources first."); return; }
+  const rvId = $("ratingSel").value;
+  const cName = (chars.find(c => c.id === cid) || {}).name || "skill";
+  try {
+    lockQa(true); let ok = 0, skip = 0, err = 0;
+    log(`Adding skill “${cName}” to ${selected.size} resource(s)…`);
+    for (const id of selected) {
+      try {
+        const existing = await dvQuery(`bookableresourcecharacteristics?$select=bookableresourcecharacteristicid&$filter=_resource_value eq ${id} and _characteristic_value eq ${cid}`);
+        if (existing.value && existing.value.length) {
+          if (rvId) { await dvUpdate("bookableresourcecharacteristic", "bookableresourcecharacteristics", existing.value[0].bookableresourcecharacteristicid, { "RatingValue@odata.bind": `/ratingvalues(${rvId})` }); ok++; }
+          else skip++;
+          continue;
+        }
+        const rec = { "Resource@odata.bind": `/bookableresources(${id})`, "Characteristic@odata.bind": `/characteristics(${cid})` };
+        if (rvId) rec["RatingValue@odata.bind"] = `/ratingvalues(${rvId})`;
+        await dvCreate("bookableresourcecharacteristic", "bookableresourcecharacteristics", rec);
+        ok++;
+      } catch (e) { err++; log(`  ✖ ${id}: ${e.message}`); }
+    }
+    setQaStatus(`Skill added: ${ok} updated, ${skip} already had it${err ? `, ${err} failed` : ""}.`);
+    log(`Skill “${cName}”: ${ok} added/updated, ${skip} already present, ${err} failed.`);
+    notify("Skill applied", `${ok} resource(s)`, err ? "warning" : "success");
+  } finally { lockQa(false); }
+}
+async function removeSkill() {
+  const cid = $("charSel").value; if (!cid) { setQaStatus("Pick a characteristic."); return; }
+  if (!selected.size) { setQaStatus("Select resources first."); return; }
+  if (!confirmTwice($("removeSkillBtn"), "Remove from selected")) return;
+  const cName = (chars.find(c => c.id === cid) || {}).name || "skill";
+  try {
+    lockQa(true); let del = 0, err = 0;
+    log(`Removing skill “${cName}” from ${selected.size} resource(s)…`);
+    for (const id of selected) {
+      try {
+        const ex = await dvQuery(`bookableresourcecharacteristics?$select=bookableresourcecharacteristicid&$filter=_resource_value eq ${id} and _characteristic_value eq ${cid}`);
+        for (const row of (ex.value || [])) { await dvDelete("bookableresourcecharacteristic", "bookableresourcecharacteristics", row.bookableresourcecharacteristicid); del++; }
+      } catch (e) { err++; log(`  ✖ ${id}: ${e.message}`); }
+    }
+    setQaStatus(`Skill removed from ${del} link(s)${err ? `, ${err} failed` : ""}.`);
+    log(`Skill “${cName}”: removed ${del} link(s), ${err} failed.`);
+    notify("Skill removed", `${del} link(s)`, err ? "warning" : "success");
+  } finally { lockQa(false); }
+}
+async function addTerritory() {
+  const tid = $("terrSel").value; if (!tid) { setQaStatus("Pick a territory."); return; }
+  if (!selected.size) { setQaStatus("Select resources first."); return; }
+  const tName = (territories.find(t => t.id === tid) || {}).name || "territory";
+  try {
+    lockQa(true); let ok = 0, skip = 0, err = 0;
+    log(`Adding territory “${tName}” to ${selected.size} resource(s)…`);
+    for (const id of selected) {
+      try {
+        const ex = await dvQuery(`msdyn_resourceterritories?$select=msdyn_resourceterritoryid&$filter=_msdyn_resource_value eq ${id} and _msdyn_territory_value eq ${tid}`);
+        if (ex.value && ex.value.length) { skip++; continue; }
+        await dvCreate("msdyn_resourceterritory", "msdyn_resourceterritories", { "msdyn_Resource@odata.bind": `/bookableresources(${id})`, "msdyn_Territory@odata.bind": `/territories(${tid})` });
+        ok++;
+      } catch (e) { err++; log(`  ✖ ${id}: ${e.message}`); }
+    }
+    setQaStatus(`Territory added: ${ok}, already linked ${skip}${err ? `, ${err} failed` : ""}.`);
+    log(`Territory “${tName}”: ${ok} added, ${skip} already linked, ${err} failed.`);
+    notify("Territory applied", `${ok} resource(s)`, err ? "warning" : "success");
+  } finally { lockQa(false); }
+}
+async function removeTerritory() {
+  const tid = $("terrSel").value; if (!tid) { setQaStatus("Pick a territory."); return; }
+  if (!selected.size) { setQaStatus("Select resources first."); return; }
+  if (!confirmTwice($("removeTerrBtn"), "Remove from selected")) return;
+  const tName = (territories.find(t => t.id === tid) || {}).name || "territory";
+  try {
+    lockQa(true); let del = 0, err = 0;
+    log(`Removing territory “${tName}” from ${selected.size} resource(s)…`);
+    for (const id of selected) {
+      try {
+        const ex = await dvQuery(`msdyn_resourceterritories?$select=msdyn_resourceterritoryid&$filter=_msdyn_resource_value eq ${id} and _msdyn_territory_value eq ${tid}`);
+        for (const row of (ex.value || [])) { await dvDelete("msdyn_resourceterritory", "msdyn_resourceterritories", row.msdyn_resourceterritoryid); del++; }
+      } catch (e) { err++; log(`  ✖ ${id}: ${e.message}`); }
+    }
+    setQaStatus(`Territory removed from ${del} link(s)${err ? `, ${err} failed` : ""}.`);
+    log(`Territory “${tName}”: removed ${del} link(s), ${err} failed.`);
+    notify("Territory removed", `${del} link(s)`, err ? "warning" : "success");
+  } finally { lockQa(false); }
+}
+
+// ============================================================================
+//  UI plumbing
+// ============================================================================
+// Busy spinner — reference-counted so overlapping operations keep it visible until all finish.
+let _busy = 0;
+function setBusy(on) { _busy = Math.max(0, _busy + (on ? 1 : -1)); $("spin").hidden = _busy === 0; }
+function lockRun(b) { setBusy(b); $("previewBtn").disabled = b; $("applyBtn").disabled = b; $("loadBtn").disabled = b; }
+function lockQa(b) { setBusy(b); ["addSkillBtn", "removeSkillBtn", "addTerrBtn", "removeTerrBtn"].forEach(i => $(i).disabled = b); }
+// Click-twice-to-confirm for destructive buttons (host-safe; window.confirm is unreliable in sandboxes).
+const _armed = new WeakMap();
+function confirmTwice(btn, label) {
+  if (_armed.get(btn)) { clearTimeout(_armed.get(btn)); _armed.delete(btn); btn.textContent = label; return true; }
+  const orig = btn.textContent; btn.textContent = "Click again to confirm";
+  _armed.set(btn, setTimeout(() => { _armed.delete(btn); btn.textContent = orig; }, 3000));
+  return false;
+}
+
+// wire up
+buildFieldRows();
+buildDayPick();
+buildTz();
+$("loadBtn").addEventListener("click", loadResources);
+$("previewBtn").addEventListener("click", preview);
+$("applyBtn").addEventListener("click", applyAll);
+$("nameFilter").addEventListener("keydown", e => { if (e.key === "Enter") loadResources(); });
+$("whInclude").addEventListener("change", () => { $("whBody").hidden = !$("whInclude").checked; });
+$("whBreak").addEventListener("change", () => { $("whBreakBox").hidden = !$("whBreak").checked; });
+document.querySelectorAll('input[name="whMode"]').forEach(r => r.addEventListener("change", () => {
+  const m = document.querySelector('input[name="whMode"]:checked').value;
+  $("whWeekly").hidden = m !== "weekly"; $("whCopy").hidden = m !== "copy";
+}));
+$("f_msdyn_organizationalunit").addEventListener("change", updateOrgOpenBtn);
+$("ouOpenBtn").addEventListener("click", () => openRecord("msdyn_organizationalunit", $("f_msdyn_organizationalunit").value));
+$("addSkillBtn").addEventListener("click", addSkill);
+$("removeSkillBtn").addEventListener("click", removeSkill);
+$("addTerrBtn").addEventListener("click", addTerritory);
+$("removeTerrBtn").addEventListener("click", removeTerritory);
+
+log("Ready. Load resources to begin.");
+// Populate the dropdowns (org units, characteristics, ratings, territories) up front,
+// so they are ready before you load resources. Retries on the next load if it fails.
+setTimeout(() => { if (!metaLoaded) loadReferenceData(); }, 400);
+</script>
+</body>
+</html>

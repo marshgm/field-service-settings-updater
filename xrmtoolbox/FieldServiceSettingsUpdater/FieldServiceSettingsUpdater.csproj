@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    XrmToolBox plugin: Field Service Settings Updater.
+    Thin WebView2 host around the shared field-service-settings-updater.html.
+    Targets .NET Framework 4.8 (required by XrmToolBox).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>FieldServiceSettingsUpdater</AssemblyName>
+    <RootNamespace>FieldServiceSettingsUpdater</RootNamespace>
+    <Product>Field Service Resource Updater</Product>
+    <Company>Mark Christie</Company>
+    <Authors>Mark Christie</Authors>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- XrmToolBox plugin SDK + Dataverse client -->
+    <PackageReference Include="XrmToolBoxPackage" Version="1.2025.7.71" />
+    <PackageReference Include="Microsoft.PowerPlatform.Dataverse.Client" Version="1.1.32" />
+    <!-- Embedded Chromium for hosting the HTML app (match XrmToolBoxPackage's WebView2) -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3351.48" />
+  </ItemGroup>
+
+  <!-- copy the shared single-file app into dist + app/ before building -->
+  <Target Name="CopyApp" BeforeTargets="BeforeBuild">
+    <Exec Command="node &quot;$(MSBuildProjectDirectory)\..\..\build.js&quot;" ContinueOnError="true" />
+  </Target>
+
+  <ItemGroup>
+    <!-- ship the app HTML next to the dll so WebView2 can load it -->
+    <None Include="app\field-service-settings-updater.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

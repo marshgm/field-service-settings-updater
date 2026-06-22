@@ -1,0 +1,93 @@
+# Field Service Resource Updater
+
+Bulk-update Field Service **Bookable Resource** settings across many resources at once — set Start/End Location, Organizational Unit, Display on Schedule Board, Enable for Availability Search, Hourly Rate and Time Off Approval; apply work hours by weekly pattern or by copying another resource's calendar; and quick add/remove skills (characteristics) and territories for everyone selected. Preview every change before applying.
+
+By Mark Christie.
+
+One self-contained HTML app runs in three hosts:
+
+- **Power Platform ToolBox (PPTB)** — dark theme, via `window.dataverseAPI`.
+- **XrmToolBox** — Windows 95 theme, hosted in a WebView2 plugin.
+- **Dynamics 365 web resource** — light theme, same-origin `fetch`.
+
+## What it does
+
+Pick a set of bookable resources (Users by default), tick the settings you want to change, preview, and apply across the whole selection.
+
+### Bookable Resource fields (bulk set)
+
+| Setting | Column | Type |
+| --- | --- | --- |
+| Start Location | `msdyn_startlocation` | Choice (Resource Address / Org Unit Address / Location Agnostic) |
+| End Location | `msdyn_endlocation` | Choice (same options) |
+| Organizational Unit | `msdyn_organizationalunit` | Lookup → `msdyn_organizationalunit` |
+| Display on Schedule Board | `msdyn_displayonscheduleboard` | Yes/No |
+| Enable for Availability Search | `msdyn_displayonscheduleassistant` | Yes/No |
+| Hourly Rate | `msdyn_hourlyrate` | Number |
+| Time Off Approval Required | `msdyn_timeoffapprovalrequired` | Yes/No |
+
+Only ticked settings are written; everything else is left untouched.
+
+**Location readiness checks.** Start/End Location are validated before you apply:
+
+- **Location Agnostic** must be set on *both* Start and End, or neither (Field Service rejects a mismatch) — checked per resource, and a contradictory pair blocks Apply.
+- **Resource Address** needs a geocoded address on the resource's related User/Contact/Account record. The grid's **Address** column shows `✓ geo` / `no geo` / `⚠ none` per resource, and the preview warns how many selected resources aren't ready.
+- **Organizational Unit Address** needs the org unit to have an address — org units with none are flagged `⚠ no address` in the Organizational Unit dropdown, and the preview warns if selected resources would use one (or have no org unit).
+
+### Work hours
+
+A resource's work hours are a **calendar** (recurring rules), not a column, so the tool uses the Field Service work-hour calendar APIs (`msdyn_SaveCalendar` / `msdyn_DeleteCalendar` / `msdyn_LoadCalendars`). Two modes:
+
+- **Weekly pattern** — choose working days + start/end times, an optional daily break, capacity and time zone. Applied as a weekly recurrence to every selected resource.
+- **Copy from a resource** — pick one resource as the source; the tool reads its calendar for a representative week and recreates that weekly pattern (working hours + breaks, in UTC) on every selected resource. Irregular per-date overrides on the source are not copied.
+
+Tick **Clear existing work hours first** to remove current rules before writing the new pattern (recommended for a predictable result).
+
+### Quick actions — skills & territories
+
+- **Skill (characteristic)** — add a characteristic to everyone selected (optionally with a rating value), or remove it. Backed by `bookableresourcecharacteristic`.
+- **Territory** — add everyone selected to a territory, or remove them. Backed by `msdyn_resourceterritory`.
+
+Add is idempotent (resources that already have the skill/territory are skipped). Remove asks you to click twice to confirm.
+
+## Using it
+
+### Power Platform ToolBox
+
+1. Install from the Tool Registry, or load locally via the Debug Menu after `npm run build`.
+2. Open the tool, pick a connection, **Load resources**, choose settings, **Preview**, then **Apply to selected**.
+
+### XrmToolBox
+
+1. Install from the Tool Library (search "Field Service Resource Updater"), or build and run `xrmtoolbox/install.ps1`.
+2. Connect with an **OAuth/MFA** connection (the WebView2 host forwards that bearer token to the Web API).
+3. Open the tool from the Tools list.
+
+### Dynamics 365 web resource
+
+Upload `field-service-settings-updater.html` as an HTML web resource; it authenticates with the signed-in session.
+
+## Build
+
+```
+npm run build          # copies the single-file app + icon into dist/ and the XTB app/ folder
+npx pptb-validate      # validate the PPTB manifest before publishing
+```
+
+For the XrmToolBox plugin:
+
+```
+cd xrmtoolbox
+node make-icons.js                              # (re)generate tile icons + logo.png
+cd FieldServiceSettingsUpdater
+dotnet build -c Release
+..\install.ps1                                  # copy dll + app into the XrmToolBox Plugins folder
+```
+
+## Notes & limits
+
+- **Permissions** — applying changes requires write access to Bookable Resource and the related tables, plus the OwnCalendar privilege for editing a User-type resource's calendar.
+- **No automatic undo** — preview shows exactly what will change; review before applying. Work-hours "clear first" deletes existing calendar rules.
+- **Copy work hours** reconstructs a *weekly* pattern from one sample week, so standard recurring schedules copy faithfully; one-off date exceptions do not.
+
+MIT licensed. See [LICENSE](LICENSE).

@@ -1,0 +1,46 @@
+{
+  "name": "proximo3-field-service-settings-updater",
+  "version": "1.0.0",
+  "displayName": "Field Service Resource Updater",
+  "description": "Bulk-update Field Service Bookable Resource settings across many resources at once: set Start/End Location, Organizational Unit, Display on Schedule Board, Enable for Availability Search, Hourly Rate and Time Off Approval; apply work hours by weekly pattern or by copying another resource; and quick add/remove skills (characteristics) and territories for everyone selected. Preview every change before applying.",
+  "main": "index.html",
+  "icon": "icon.svg",
+  "files": ["dist", "npm-shrinkwrap.json"],
+  "license": "MIT",
+  "author": "Mark Christie (https://github.com/TheMarkChristie)",
+  "keywords": [
+    "dataverse",
+    "dynamics-365",
+    "power-platform",
+    "field-service",
+    "bookable-resource",
+    "scheduling",
+    "work-hours",
+    "characteristics",
+    "territory",
+    "bulk-update"
+  ],
+  "contributors": [
+    { "name": "Mark Christie", "url": "https://github.com/TheMarkChristie" }
+  ],
+  "homepage": "https://github.com/TheMarkChristie/field-service-settings-updater#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheMarkChristie/field-service-settings-updater.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TheMarkChristie/field-service-settings-updater/issues"
+  },
+  "configurations": {
+    "repository": "https://github.com/TheMarkChristie/field-service-settings-updater",
+    "website": "https://github.com/TheMarkChristie/field-service-settings-updater#readme",
+    "readmeUrl": "https://raw.githubusercontent.com/TheMarkChristie/field-service-settings-updater/main/README.md"
+  },
+  "features": {
+    "multiConnection": "optional",
+    "minAPI": "1.2.2"
+  },
+  "scripts": {
+    "build": "node build.js"
+  }
+}
