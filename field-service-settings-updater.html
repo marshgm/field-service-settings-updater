@@ -340,6 +340,18 @@
         </div>
       </div>
     </fieldset>
+    <fieldset>
+      <legend>Field Service Mobile — New Mobile Experience</legend>
+      <div class="row">
+        <div style="flex:1 1 100%">
+          <p class="hint" style="margin:0">Assigns/removes the <b>Field Service – New Mobile Experience</b> security role on the selected <b>User</b> resources' system users (non-User resources are skipped). The environment-level toggle is managed separately in the Field Service Mobile app settings.</p>
+        </div>
+        <div style="flex:0 0 auto; display:flex; align-items:end; gap:8px">
+          <button type="button" class="primary small" id="mobAddBtn">Enable for selected</button>
+          <button type="button" class="danger small" id="mobRemoveBtn">Remove from selected</button>
+        </div>
+      </div>
+    </fieldset>
     <div class="btnbar"><span id="qaStatus" role="status" aria-live="polite"></span></div>
   </div>
 
@@ -356,7 +368,7 @@
    Hosts: PPTB (window.dataverseAPI) · XrmToolBox WebView2 (window.XTB_CONFIG) ·
    D365 web resource (same-origin fetch). See docs/ARCHITECTURE.md.
    ============================================================================ */
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.0.1";
 const API_VER = "v9.2";
 
 const PPTB = (typeof window !== "undefined") && !!window.dataverseAPI;
@@ -498,6 +510,17 @@ async function dvClearLookup(logicalName, entitySet, id, navProperty, bindField)
   const r = await fetch(`${baseUrl()}/${entitySet}(${id})/${navProperty}/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers() });
   if (!r.ok && r.status !== 404) throw new Error(await errText(r));
 }
+// N:N associate / disassociate (e.g. systemuser ↔ role via systemuserroles_association).
+async function dvAssociate(pLogical, pSet, pId, rel, rLogical, rSet, rId) {
+  if (PPTB) { await window.dataverseAPI.associate(pLogical, pId, rel, rLogical, rId); return; }
+  const r = await fetch(`${baseUrl()}/${pSet}(${pId})/${rel}/$ref`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify({ "@odata.id": `${baseUrl()}/${rSet}(${rId})` }) });
+  if (!r.ok) throw new Error(await errText(r));
+}
+async function dvDisassociate(pLogical, pSet, pId, rel, rSet, rId) {
+  if (PPTB) { await window.dataverseAPI.disassociate(pLogical, pId, rel, rId); return; }
+  const r = await fetch(`${baseUrl()}/${pSet}(${pId})/${rel}(${rId})/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers() });
+  if (!r.ok && r.status !== 404) throw new Error(await errText(r));
+}
 // Unbound action (e.g. msdyn_SaveCalendar / msdyn_DeleteCalendar / msdyn_LoadCalendars).
 async function dvAction(name, params) {
   if (PPTB) return await window.dataverseAPI.execute({ operationName: name, operationType: "action", parameters: params || {} });
@@ -546,6 +569,7 @@ let orgUnits = [];                   // { id, name }
 let chars = [];                      // characteristics
 let ratings = [];                    // rating values
 let territories = [];                // territories
+let mobileRoles = [];                // "Field Service – New Mobile Experience" role, per business unit
 let metaLoaded = false;
 
 // Time-zone list (subset of the Field Service work-hour API codes; UK default).
@@ -677,20 +701,26 @@ async function enrichResourceAddresses(list) {
     if (r.accountId) sets.accounts.ids.add(r.accountId);
   }
   const addr = {};   // related id -> { geo, text }
+  const userBu = {}; // systemuserid -> business unit id (for BU-scoped security roles)
   for (const set in sets) {
     const { idf, ids } = sets[set];
     const arr = [...ids];
+    const extra = set === "systemusers" ? ",_businessunitid_value" : "";
     for (let i = 0; i < arr.length; i += 20) {
       const flt = arr.slice(i, i + 20).map(id => `${idf} eq ${id}`).join(" or ");
-      const rows = await dvQueryAll(`${set}?$select=${idf},address1_latitude,address1_longitude,address1_line1,address1_composite&$filter=${encodeURIComponent(flt)}`).catch(() => []);
-      for (const x of rows) addr[x[idf]] = {
-        geo: x.address1_latitude != null && x.address1_longitude != null,
-        text: !!(x.address1_line1 || x.address1_composite),
-      };
+      const rows = await dvQueryAll(`${set}?$select=${idf},address1_latitude,address1_longitude,address1_line1,address1_composite${extra}&$filter=${encodeURIComponent(flt)}`).catch(() => []);
+      for (const x of rows) {
+        addr[x[idf]] = {
+          geo: x.address1_latitude != null && x.address1_longitude != null,
+          text: !!(x.address1_line1 || x.address1_composite),
+        };
+        if (set === "systemusers") userBu[x[idf]] = x._businessunitid_value || null;
+      }
     }
   }
   for (const r of list) {
     const rid = r.userId || r.contactId || r.accountId;
+    r.userBu = r.userId ? (userBu[r.userId] || null) : null;
     if (!rid) { r.addrState = "na"; continue; }
     const a = addr[rid];
     r.addrState = !a ? "none" : a.geo ? "geo" : a.text ? "text" : "none";
@@ -756,11 +786,12 @@ async function loadReferenceData() {
   setBusy(true);
   try {
     log("Loading org units, characteristics, ratings, territories…");
-    const [ou, ch, rv, tr] = await Promise.all([
+    const [ou, ch, rv, tr, roles] = await Promise.all([
       dvQueryAll("msdyn_organizationalunits?$select=msdyn_name,msdyn_organizationalunitid,msdyn_address1,msdyn_city,msdyn_postalcode,msdyn_latitude,msdyn_longitude&$orderby=msdyn_name").catch(() => []),
       dvQueryAll("characteristics?$select=name,characteristicid,characteristictype&$orderby=name").catch(() => []),
       dvQueryAll("ratingvalues?$select=name,value,ratingvalueid&$orderby=value").catch(() => []),
       dvQueryAll("territories?$select=name,territoryid&$orderby=name").catch(() => []),
+      dvQueryAll("roles?$select=roleid,name,_businessunitid_value&$filter=" + encodeURIComponent("contains(name,'New Mobile Experience')")).catch(() => []),
     ]);
     orgUnits = ou.map(x => ({
       id: x.msdyn_organizationalunitid, name: x.msdyn_name || "(no name)",
@@ -770,6 +801,7 @@ async function loadReferenceData() {
     chars = ch.map(x => ({ id: x.characteristicid, name: x.name || "(no name)", type: x.characteristictype }));
     ratings = rv.map(x => ({ id: x.ratingvalueid, name: x.name || x.value, value: x.value }));
     territories = tr.map(x => ({ id: x.territoryid, name: x.name || "(no name)" }));
+    mobileRoles = roles.map(x => ({ id: x.roleid, name: x.name, buid: x._businessunitid_value || null }));
 
     const ouSel = $("f_msdyn_organizationalunit");
     ouSel.innerHTML = `<option value="">— clear —</option>` + orgUnits.map(o => `<option value="${o.id}">${escapeHtml(o.name)}${o.hasAddr ? "" : "  ⚠ no address"}</option>`).join("");
@@ -779,7 +811,8 @@ async function loadReferenceData() {
     $("charSel").innerHTML = `<option value="">— select —</option>` + chars.map(c => `<option value="${c.id}">${escapeHtml(c.name)}${c.type === 2 ? " (cert)" : c.type === 1 ? " (skill)" : ""}</option>`).join("");
     $("ratingSel").innerHTML = `<option value="">(none)</option>` + ratings.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join("");
     $("terrSel").innerHTML = `<option value="">— select —</option>` + territories.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
-    log(`Reference data: ${orgUnits.length} org units, ${chars.length} characteristics, ${ratings.length} ratings, ${territories.length} territories.`);
+    log(`Reference data: ${orgUnits.length} org units, ${chars.length} characteristics, ${ratings.length} ratings, ${territories.length} territories, ${mobileRoles.length} “New Mobile Experience” role(s).`);
+    if (!mobileRoles.length) log(`ℹ No “Field Service – New Mobile Experience” security role found — the mobile quick action will be unavailable until the feature is enabled in this environment.`);
   } catch (e) {
     metaLoaded = false;   // allow a retry on the next load
     log("⚠ Some reference data failed to load: " + e.message);
@@ -1162,6 +1195,36 @@ async function removeTerritory() {
   } finally { lockQa(false); }
 }
 
+// Assign / remove the "Field Service – New Mobile Experience" security role on the selected
+// User resources' system users. Roles are business-unit scoped, so match each user's BU.
+async function setMobileExperience(add) {
+  if (!selected.size) { setQaStatus("Select resources first."); return; }
+  if (!mobileRoles.length) { setQaStatus("No “Field Service – New Mobile Experience” role in this environment."); return; }
+  if (!add && !confirmTwice($("mobRemoveBtn"), "Remove from selected")) return;
+  try {
+    lockQa(true);
+    let ok = 0, skip = 0, err = 0, nonUser = 0;
+    log(`${add ? "Assigning" : "Removing"} “New Mobile Experience” role ${add ? "to" : "from"} selected users…`);
+    for (const id of selected) {
+      const r = resources.find(x => x.id === id); if (!r) continue;
+      if (r.type !== 3 || !r.userId) { nonUser++; continue; }   // security roles attach to users only
+      const role = mobileRoles.find(x => x.buid && r.userBu && x.buid === r.userBu) || mobileRoles[0];
+      try {
+        if (add) await dvAssociate("systemuser", "systemusers", r.userId, "systemuserroles_association", "role", "roles", role.id);
+        else await dvDisassociate("systemuser", "systemusers", r.userId, "systemuserroles_association", "roles", role.id);
+        ok++;
+      } catch (e) {
+        if (add && /duplicate|already|cannot insert/i.test(e.message)) skip++;
+        else { err++; log(`  ✖ ${r.name}: ${e.message}`); }
+      }
+    }
+    const tail = (nonUser ? `, ${nonUser} skipped (not User-type)` : "") + (err ? `, ${err} failed` : "");
+    setQaStatus(`${add ? "Enabled" : "Removed"} new mobile experience: ${ok}${add && skip ? `, ${skip} already had it` : ""}${tail}.`);
+    log(`New Mobile Experience: ${ok} ${add ? "assigned" : "removed"}${add ? `, ${skip} already present` : ""}, ${nonUser} non-user skipped, ${err} failed.`);
+    notify(add ? "New mobile experience enabled" : "New mobile experience removed", `${ok} user(s)`, err ? "warning" : "success");
+  } finally { lockQa(false); }
+}
+
 // ============================================================================
 //  UI plumbing
 // ============================================================================
@@ -1169,7 +1232,7 @@ async function removeTerritory() {
 let _busy = 0;
 function setBusy(on) { _busy = Math.max(0, _busy + (on ? 1 : -1)); $("spin").hidden = _busy === 0; }
 function lockRun(b) { setBusy(b); $("previewBtn").disabled = b; $("applyBtn").disabled = b; $("loadBtn").disabled = b; }
-function lockQa(b) { setBusy(b); ["addSkillBtn", "removeSkillBtn", "addTerrBtn", "removeTerrBtn"].forEach(i => $(i).disabled = b); }
+function lockQa(b) { setBusy(b); ["addSkillBtn", "removeSkillBtn", "addTerrBtn", "removeTerrBtn", "mobAddBtn", "mobRemoveBtn"].forEach(i => $(i).disabled = b); }
 // Click-twice-to-confirm for destructive buttons (host-safe; window.confirm is unreliable in sandboxes).
 const _armed = new WeakMap();
 function confirmTwice(btn, label) {
@@ -1199,6 +1262,8 @@ $("addSkillBtn").addEventListener("click", addSkill);
 $("removeSkillBtn").addEventListener("click", removeSkill);
 $("addTerrBtn").addEventListener("click", addTerritory);
 $("removeTerrBtn").addEventListener("click", removeTerritory);
+$("mobAddBtn").addEventListener("click", () => setMobileExperience(true));
+$("mobRemoveBtn").addEventListener("click", () => setMobileExperience(false));
 
 log("Ready. Load resources to begin.");
 // Populate the dropdowns (org units, characteristics, ratings, territories) up front,

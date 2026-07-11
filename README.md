@@ -47,8 +47,9 @@ Tick **Clear existing work hours first** to remove current rules before writing 
 
 - **Skill (characteristic)** — add a characteristic to everyone selected (optionally with a rating value), or remove it. Backed by `bookableresourcecharacteristic`.
 - **Territory** — add everyone selected to a territory, or remove them. Backed by `msdyn_resourceterritory`.
+- **New Mobile Experience** — enable/remove the refreshed Field Service mobile UX for the selected **User** resources by assigning/removing the **Field Service – New Mobile Experience** security role on their system users (business-unit matched; non-User resources are skipped). The environment-level toggle is managed separately in the Field Service Mobile app settings.
 
-Add is idempotent (resources that already have the skill/territory are skipped). Remove asks you to click twice to confirm.
+Add is idempotent (resources that already have the skill/territory/role are skipped). Remove asks you to click twice to confirm.
 
 ## Using it
 
