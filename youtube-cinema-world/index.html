@@ -31,7 +31,7 @@
      so each iframe shows through in correct 3D perspective. */
   #css3d, #webgl { position: fixed; inset: 0; }
   #css3d { z-index: 1; }
-  #webgl { z-index: 2; }
+  #webgl { z-index: 2; touch-action: none; }
   /* While the menu is open, let clicks pass through to the YouTube iframes so
      users can operate YouTube's own controls (play, captions, volume). */
   body.menu-open #webgl { pointer-events: none; }
@@ -172,6 +172,49 @@
     font-weight: 600;
   }
 
+  /* Touch controls — shown only while walking on a touch device */
+  .touch-ui { display: none; }
+  body.touch-device.locked .touch-ui { display: block; }
+  body.touch-device #hud .keys { display: none; }
+  .hud-btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    padding: 0.4rem 0.7rem;
+    font: inherit;
+    font-size: 1.15rem;
+    color: var(--text);
+    background: rgba(10, 6, 16, 0.85);
+    border: 1px solid #7a7194;
+    border-radius: 0.5rem;
+    cursor: pointer;
+  }
+  #menu-btn { position: fixed; top: 1rem; right: 1rem; z-index: 6; font-size: 1rem; font-weight: 600; }
+  .media-btns {
+    position: fixed;
+    bottom: 1.25rem; right: 1rem;
+    z-index: 6;
+    display: flex;
+    gap: 0.6rem;
+  }
+  #joystick {
+    position: fixed;
+    bottom: 1.5rem; left: 1.25rem;
+    z-index: 6;
+    width: 8rem; height: 8rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    touch-action: none;
+  }
+  #joy-knob {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 3.5rem; height: 3.5rem;
+    margin: -1.75rem 0 0 -1.75rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+  }
+
   #status {
     position: fixed;
     z-index: 15;
@@ -185,6 +228,8 @@
     font-size: 0.92rem;
   }
   #status:empty { display: none; }
+  /* keep the status toast clear of the touch media buttons */
+  body.touch-device.locked #status { bottom: 5.5rem; }
 </style>
 </head>
 <body class="menu-open">
@@ -282,6 +327,7 @@
       <li><kbd>M</kbd> — mute / unmute</li>
       <li><kbd>-</kbd> / <kbd>=</kbd> — volume down / up</li>
       <li><kbd>Esc</kbd> — leave the walk and reopen this menu</li>
+      <li>Touch screens — left joystick to walk, drag anywhere else to look, on-screen buttons for playback, <strong>Menu</strong> to come back here</li>
     </ul>
     <p class="hint">Single-key shortcuts are only active while you are walking (pointer locked); they are disabled when this menu is open. Audio follows you: only the room you're standing in is unmuted.</p>
     <p class="hint">Captions: open this menu with <kbd>Esc</kbd>, then click the CC button on that room's player.</p>
@@ -294,6 +340,17 @@
   <div id="crosshair"></div>
   <div class="location" id="hud-location">Lobby</div>
   <div class="keys">Esc menu · Space play/pause · N/P next/prev · M mute</div>
+</div>
+
+<div class="touch-ui">
+  <button type="button" id="menu-btn" class="hud-btn">Menu</button>
+  <div id="joystick" aria-hidden="true"><div id="joy-knob"></div></div>
+  <div class="media-btns">
+    <button type="button" id="tp-prev" class="hud-btn" aria-label="Previous video">⏮</button>
+    <button type="button" id="tp-play" class="hud-btn" aria-label="Play or pause">⏯</button>
+    <button type="button" id="tp-next" class="hud-btn" aria-label="Next video">⏭</button>
+    <button type="button" id="tp-mute" class="hud-btn" aria-label="Mute or unmute" aria-pressed="false">🔊</button>
+  </div>
 </div>
 
 <div id="status" role="status" aria-live="polite"></div>
@@ -313,6 +370,8 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+if (isTouch) document.body.classList.add('touch-device');
 const UP = new THREE.Vector3(0, 1, 0);
 
 // ---------------------------------------------------------------------------
@@ -370,7 +429,38 @@ const wallMat = new THREE.MeshStandardMaterial({ color: 0x241a26, roughness: 0.9
 const carpetMat = new THREE.MeshStandardMaterial({ color: 0x461219, roughness: 1 });
 const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x120c14, roughness: 1 });
 const curtainMat = new THREE.MeshStandardMaterial({ color: 0x5e1220, roughness: 0.9 });
-const seatMat = new THREE.MeshStandardMaterial({ color: 0x7a1626, roughness: 0.85 });
+// Seat upholstery: a navy/purple tartan with white pinstripes, drawn
+// procedurally so the app stays dependency-free. Two passes at right angles
+// (the second at half opacity) fake the over-under weave of the cloth.
+function makeTartanTexture() {
+  const S = 128, P = 64; // two setts per tile
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const navy = '#2c296e', purple = '#a763a7', white = '#e8e6f2';
+  function pass(vertical) {
+    const band = (x, w, color) => {
+      g.fillStyle = color;
+      for (const off of [0, P]) {
+        if (vertical) g.fillRect(x + off, 0, w, S);
+        else g.fillRect(0, x + off, S, w);
+      }
+    };
+    band(0, P, navy);
+    band(4, 26, purple);
+    band(40, 2, white);
+    band(48, 2, white);
+  }
+  pass(true);
+  g.globalAlpha = 0.5;
+  pass(false);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = glRenderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+const seatMat = new THREE.MeshStandardMaterial({ map: makeTartanTexture(), roughness: 0.9 });
 const frameMat = new THREE.MeshStandardMaterial({ color: 0x060406 });
 const trimMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
 const seatGeo = new THREE.BoxGeometry(0.85, 0.55, 0.8);
@@ -591,6 +681,78 @@ scene.add(new THREE.AmbientLight(0x4a4258, 1.0));
 const controls = new PointerLockControls(camera, glRenderer.domElement);
 const keys = new Set();
 const clock = new THREE.Clock();
+let walking = false; // desktop: mirrors pointer lock; touch: toggled by the UI
+
+// Touch look: drag on the canvas rotates the camera (same YXZ euler scheme
+// PointerLockControls uses)
+const lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+function applyLook(dx, dy) {
+  lookEuler.setFromQuaternion(camera.quaternion);
+  lookEuler.y -= dx * 0.0045;
+  lookEuler.x = THREE.MathUtils.clamp(lookEuler.x - dy * 0.0045, -1.45, 1.45);
+  camera.quaternion.setFromEuler(lookEuler);
+}
+let lookTouchId = null, lookX = 0, lookY = 0;
+glRenderer.domElement.addEventListener('touchstart', (e) => {
+  if (!walking || lookTouchId !== null) return;
+  const t = e.changedTouches[0];
+  lookTouchId = t.identifier;
+  lookX = t.clientX;
+  lookY = t.clientY;
+}, { passive: true });
+glRenderer.domElement.addEventListener('touchmove', (e) => {
+  if (lookTouchId === null) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier !== lookTouchId) continue;
+    applyLook(t.clientX - lookX, t.clientY - lookY);
+    lookX = t.clientX;
+    lookY = t.clientY;
+    e.preventDefault();
+  }
+}, { passive: false });
+for (const ev of ['touchend', 'touchcancel']) {
+  glRenderer.domElement.addEventListener(ev, (e) => {
+    for (const t of e.changedTouches) if (t.identifier === lookTouchId) lookTouchId = null;
+  });
+}
+
+// Virtual joystick: analog walk vector
+let joyX = 0, joyY = 0, joyTouchId = null;
+const joystick = document.getElementById('joystick');
+const joyKnob = document.getElementById('joy-knob');
+function setJoy(t) {
+  const r = joystick.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const max = r.width / 2;
+  let dx = (t.clientX - cx) / max, dy = (t.clientY - cy) / max;
+  const len = Math.hypot(dx, dy);
+  if (len > 1) { dx /= len; dy /= len; }
+  joyX = dx;
+  joyY = dy;
+  joyKnob.style.transform = `translate(${dx * max * 0.6}px, ${dy * max * 0.6}px)`;
+}
+joystick.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (joyTouchId === null) {
+    joyTouchId = e.changedTouches[0].identifier;
+    setJoy(e.changedTouches[0]);
+  }
+}, { passive: false });
+joystick.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) if (t.identifier === joyTouchId) setJoy(t);
+}, { passive: false });
+for (const ev of ['touchend', 'touchcancel']) {
+  joystick.addEventListener(ev, (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== joyTouchId) continue;
+      joyTouchId = null;
+      joyX = 0;
+      joyY = 0;
+      joyKnob.style.transform = '';
+    }
+  });
+}
 
 function circleHitsBox(px, pz, box) {
   return px > box.min.x - PLAYER_RADIUS && px < box.max.x + PLAYER_RADIUS &&
@@ -612,13 +774,12 @@ const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
 
 function updateMovement(dt) {
-  if (!controls.isLocked) return;
-  let fwd = 0, strafe = 0;
+  if (!walking) return;
+  let fwd = -joyY, strafe = joyX;
   if (keys.has('KeyW') || keys.has('ArrowUp')) fwd += 1;
   if (keys.has('KeyS') || keys.has('ArrowDown')) fwd -= 1;
   if (keys.has('KeyD') || keys.has('ArrowRight')) strafe += 1;
   if (keys.has('KeyA') || keys.has('ArrowLeft')) strafe -= 1;
-  if (!fwd && !strafe) return;
 
   const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight')) ? 7 : 4;
   camera.getWorldDirection(forward);
@@ -628,9 +789,11 @@ function updateMovement(dt) {
 
   const move = new THREE.Vector3()
     .addScaledVector(forward, fwd)
-    .addScaledVector(right, strafe)
-    .normalize()
-    .multiplyScalar(speed * dt);
+    .addScaledVector(right, strafe);
+  const len = move.length();
+  if (len < 0.05) return;
+  if (len > 1) move.divideScalar(len); // analog joystick keeps partial speed
+  move.multiplyScalar(speed * dt);
   tryMove(move.x, move.z);
 }
 
@@ -847,60 +1010,91 @@ for (let i = 0; i < N; i++) {
 }
 
 perfCheckbox.addEventListener('change', applyPerfMode);
-enterBtn.addEventListener('click', () => controls.lock());
+// Six videos decoding at once is a lot for a phone — default performance
+// mode on for touch devices (the user can untick it).
+if (isTouch) perfCheckbox.checked = true;
 
-controls.addEventListener('lock', () => {
+function enterWalk() {
+  walking = true;
   document.body.classList.add('locked');
   document.body.classList.remove('menu-open');
-});
-controls.addEventListener('unlock', () => {
+}
+function exitWalk() {
+  walking = false;
+  keys.clear();
   document.body.classList.remove('locked');
   document.body.classList.add('menu-open');
   enterBtn.focus();
+}
+
+enterBtn.addEventListener('click', () => {
+  if (isTouch) enterWalk(); // no pointer lock on touch — just switch modes
+  else controls.lock();
 });
+document.getElementById('menu-btn').addEventListener('click', exitWalk);
+
+controls.addEventListener('lock', enterWalk);
+controls.addEventListener('unlock', exitWalk);
+
+// ---------------------------------------------------------------------------
+// Media actions — shared by keyboard shortcuts and the touch buttons.
+// They control the room the walker is standing in.
+// ---------------------------------------------------------------------------
+function activePlayer() {
+  const p = activeRoom >= 0 ? players[activeRoom] : null;
+  if (!p || !playerReady[activeRoom]) {
+    setStatus('Step into a screen room to control its playback.');
+    return null;
+  }
+  return p;
+}
+function togglePlay() {
+  const p = activePlayer();
+  if (!p) return;
+  if (p.getPlayerState() === YT.PlayerState.PLAYING) { p.pauseVideo(); setStatus('Paused.'); }
+  else p.playVideo();
+}
+function nextVideo() { const p = activePlayer(); if (p) p.nextVideo(); }
+function prevVideo() { const p = activePlayer(); if (p) p.previousVideo(); }
+function toggleMute() {
+  userMuted = !userMuted;
+  applyAudio();
+  setStatus(userMuted ? 'Muted.' : 'Sound on.');
+  const btn = document.getElementById('tp-mute');
+  btn.setAttribute('aria-pressed', String(userMuted));
+  btn.textContent = userMuted ? '🔇' : '🔊';
+}
+function changeVolume(delta) {
+  userVolume = THREE.MathUtils.clamp(userVolume + delta, 0, 100);
+  applyAudio();
+  setStatus('Volume ' + userVolume + '%');
+}
+document.getElementById('tp-play').addEventListener('click', togglePlay);
+document.getElementById('tp-next').addEventListener('click', nextVideo);
+document.getElementById('tp-prev').addEventListener('click', prevVideo);
+document.getElementById('tp-mute').addEventListener('click', toggleMute);
 
 // Single-key media shortcuts — only while pointer-locked (walking), so they
 // can never collide with typing in the menu. They control the room you're in.
 document.addEventListener('keydown', (e) => {
-  if (!controls.isLocked) {
+  if (!walking) {
     keys.clear();
     return;
   }
+  // On touch devices there is no pointer lock, so handle Esc ourselves
+  // (covers tablets with external keyboards).
+  if (e.code === 'Escape' && !controls.isLocked) {
+    exitWalk();
+    return;
+  }
   keys.add(e.code);
-  if (e.code === 'Space') e.preventDefault();
-
-  if (e.code === 'KeyM') {
-    userMuted = !userMuted;
-    applyAudio();
-    setStatus(userMuted ? 'Muted.' : 'Sound on.');
-    return;
-  }
-  const p = activeRoom >= 0 ? players[activeRoom] : null;
-  if (!p || !playerReady[activeRoom]) {
-    if (['Space', 'KeyN', 'KeyP', 'Minus', 'Equal'].includes(e.code)) {
-      setStatus('Step into a screen room to control its playback.');
-    }
-    return;
-  }
   switch (e.code) {
-    case 'Space': {
-      const state = p.getPlayerState();
-      if (state === YT.PlayerState.PLAYING) { p.pauseVideo(); setStatus('Paused.'); }
-      else p.playVideo();
-      break;
-    }
-    case 'KeyN': p.nextVideo(); break;
-    case 'KeyP': p.previousVideo(); break;
-    case 'Minus':
-      userVolume = Math.max(0, userVolume - 10);
-      applyAudio();
-      setStatus('Volume ' + userVolume + '%');
-      break;
-    case 'Equal':
-      userVolume = Math.min(100, userVolume + 10);
-      applyAudio();
-      setStatus('Volume ' + userVolume + '%');
-      break;
+    case 'Space': e.preventDefault(); togglePlay(); break;
+    case 'KeyN': nextVideo(); break;
+    case 'KeyP': prevVideo(); break;
+    case 'KeyM': toggleMute(); break;
+    case 'Minus': changeVolume(-10); break;
+    case 'Equal': changeVolume(10); break;
   }
 });
 document.addEventListener('keyup', (e) => keys.delete(e.code));

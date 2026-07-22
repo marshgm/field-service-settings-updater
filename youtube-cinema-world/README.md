@@ -12,8 +12,10 @@ external service it talks to is YouTube itself.
 
 ## How it works
 
-The multiplex (lobby corridor, six rooms with seats, curtains, audiences,
-door signs and lighting) is rendered with WebGL. Each room's YouTube player is
+The multiplex (lobby corridor, six rooms with tartan-upholstered seats,
+curtains, audiences, door signs and lighting) is rendered with WebGL — the
+tartan is drawn procedurally onto a canvas texture, so no image assets are
+needed. Each room's YouTube player is
 a real `<iframe>` positioned in the same 3D space using Three.js's
 `CSS3DRenderer`; the WebGL scene punches a transparent hole where each screen
 is, so the videos show through in correct perspective and keep playing while
@@ -65,6 +67,14 @@ GitHub Pages — point Pages at this folder (or the repo root and browse to
 | `M` | Mute / unmute |
 | `-` / `=` | Volume down / up |
 | `Esc` | Leave the walk and reopen the menu |
+
+**On a phone or tablet** it switches to touch controls automatically: a
+virtual joystick (bottom left) to walk, drag anywhere else to look around,
+on-screen play/next/previous/mute buttons, and a **Menu** button to get back
+to the playlist menu. Performance mode defaults to on for touch devices so
+only the room you're in decodes video; untick it if your device can take all
+six. If a room stays silent when you walk in, tap the play button once —
+mobile browsers require a tap before they'll unmute audio.
 
 While the menu is open, the 3D screens are directly clickable — you can use
 YouTube's own player controls, including **captions (CC)** and quality
