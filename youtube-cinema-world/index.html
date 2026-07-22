@@ -465,9 +465,7 @@ const frameMat = new THREE.MeshStandardMaterial({ color: 0x060406 });
 const trimMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
 const seatGeo = new THREE.BoxGeometry(0.85, 0.55, 0.8);
 const backGeo = new THREE.BoxGeometry(0.85, 0.75, 0.16);
-const bodyGeo = new THREE.BoxGeometry(0.5, 0.62, 0.4);
-const headGeo = new THREE.SphereGeometry(0.16, 12, 10);
-const audienceColors = [0x2c3550, 0x33502c, 0x50462c, 0x3d2c50, 0x4a3038];
+const audienceSeats = []; // world position + facing for every seat; filled per room
 
 const colliders = [];
 
@@ -510,11 +508,66 @@ function makeSign(text) {
   );
 }
 
+// Marquee above each door: the Summit year, plus whatever that room is
+// playing right now (updated live from the YouTube player)
+function makeMarquee(year) {
+  const c = document.createElement('canvas');
+  c.width = 1024;
+  c.height = 320;
+  const g = c.getContext('2d');
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  function draw(title) {
+    g.fillStyle = '#1c0510';
+    g.fillRect(0, 0, 1024, 320);
+    g.strokeStyle = '#ffc46b';
+    g.lineWidth = 8;
+    g.strokeRect(12, 12, 1000, 296);
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = '#ffd9a0';
+    if (!title) {
+      g.font = 'bold 160px system-ui, sans-serif';
+      g.fillText(year, 512, 160);
+    } else {
+      g.font = 'bold 100px system-ui, sans-serif';
+      g.fillText(year, 512, 88);
+      g.font = '46px system-ui, sans-serif';
+      g.fillStyle = '#f2eef7';
+      // wrap the title to at most two lines, ellipsis if it still overflows
+      const words = title.split(' ');
+      const lines = [];
+      let cur = '', truncated = false;
+      for (const w of words) {
+        const t = cur ? cur + ' ' + w : w;
+        if (g.measureText(t).width > 940 && cur) {
+          if (lines.length === 1) { truncated = true; break; }
+          lines.push(cur);
+          cur = w;
+        } else {
+          cur = t;
+        }
+      }
+      if (cur) lines.push(truncated ? cur + '…' : cur);
+      g.fillText(lines[0], 512, 190);
+      if (lines[1]) g.fillText(lines[1], 512, 252);
+    }
+    tex.needsUpdate = true;
+  }
+  draw('');
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(4.2, 1.3),
+    new THREE.MeshBasicMaterial({ map: tex })
+  );
+  return { mesh, draw };
+}
+
 // ---------------------------------------------------------------------------
 // Room builder — geometry, colliders, screen hole + CSS3D player surface
 // ---------------------------------------------------------------------------
 const SCREEN_PX_W = 960, SCREEN_PX_H = 540;
 const screenLights = [];
+const marquees = [];
 const roomBoxes = []; // world-space interior boxes for "which room am I in"
 
 function buildRoom(room, index) {
@@ -559,27 +612,18 @@ function buildRoom(room, index) {
         const back = new THREE.Mesh(backGeo, seatMat);
         back.position.set(x, 0.9, rowZ + 0.32);
         g.add(back);
-        if (Math.random() < 0.16) {
-          const mat = new THREE.MeshStandardMaterial({
-            color: audienceColors[Math.floor(Math.random() * audienceColors.length)],
-            roughness: 1
-          });
-          const body = new THREE.Mesh(bodyGeo, mat);
-          body.position.set(x, 0.87, rowZ);
-          g.add(body);
-          const head = new THREE.Mesh(headGeo, new THREE.MeshStandardMaterial({ color: 0x8a6f5c, roughness: 1 }));
-          head.position.set(x, 1.34, rowZ);
-          g.add(head);
-        }
+        const seatWorld = new THREE.Vector3(x, 0, rowZ).applyAxisAngle(UP, room.yaw).add(room.center);
+        audienceSeats.push({ x: seatWorld.x, z: seatWorld.z, yaw: room.yaw });
       }
       addCollider(side === -1 ? -6.5 : 1.2, rowZ - 0.55, side === -1 ? -1.2 : 6.5, rowZ + 0.55, room.yaw, room.center);
     }
   }
 
-  // Sign above the door on the lobby side — the Summit year
-  const sign = makeSign(room.sign);
-  sign.position.set(0, 3.9, ROOM_HD + 0.4);
-  g.add(sign);
+  // Marquee above the door on the lobby side — year + what's playing
+  const marquee = makeMarquee(room.sign);
+  marquee.mesh.position.set(0, 4.35, ROOM_HD + 0.4);
+  g.add(marquee.mesh);
+  marquees.push(marquee);
 
   // Screen light (the "projector glow")
   const light = new THREE.PointLight(0xbfd4ff, 40, 20, 1.8);
@@ -628,6 +672,88 @@ function buildRoom(room, index) {
 }
 
 ROOMS.forEach(buildRoom);
+
+// ---------------------------------------------------------------------------
+// Audience — every seat filled with a little Sims-style local. Six instanced
+// meshes render all ~300 of them in six draw calls, and roughly one in nine
+// gets the tell-tale spinning plumbob.
+// ---------------------------------------------------------------------------
+let updatePlumbobs = null;
+{
+  const n = audienceSeats.length;
+  const SKIN = ['#f2c6a0', '#e0ac69', '#c68642', '#8d5524', '#ffdbac'];
+  const SHIRT = ['#e05263', '#3b8ee0', '#43b06c', '#e0a53b', '#8e5be0', '#d94fa3', '#2ec4b6', '#ef7b45'];
+  const HAIR = ['#2b2118', '#4a3220', '#7a5230', '#b58143', '#d9b380', '#1a1a1a', '#a03b2c'];
+  const TROUSER = ['#2c3550', '#3a3a3a', '#5a4632', '#33415c'];
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+  const hairGeo = new THREE.SphereGeometry(0.155, 12, 10);
+  hairGeo.scale(1, 0.72, 1);
+  const parts = {
+    torso: { geo: new THREE.BoxGeometry(0.44, 0.5, 0.3), off: [0, 0.86, 0] },
+    lap:   { geo: new THREE.BoxGeometry(0.4, 0.14, 0.38), off: [0, 0.62, -0.12] },
+    armL:  { geo: new THREE.BoxGeometry(0.09, 0.4, 0.11), off: [-0.28, 0.84, 0] },
+    armR:  { geo: new THREE.BoxGeometry(0.09, 0.4, 0.11), off: [0.28, 0.84, 0] },
+    head:  { geo: new THREE.SphereGeometry(0.145, 12, 10), off: [0, 1.32, 0] },
+    hair:  { geo: hairGeo, off: [0, 1.38, 0.03] },
+  };
+  const meshes = {};
+  for (const k in parts) {
+    meshes[k] = new THREE.InstancedMesh(parts[k].geo, new THREE.MeshStandardMaterial({ roughness: 1 }), n);
+    scene.add(meshes[k]);
+  }
+
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  const offM = new THREE.Matrix4();
+  const partM = new THREE.Matrix4();
+  const plumbobSeats = [];
+  audienceSeats.forEach((s, i) => {
+    dummy.position.set(s.x, 0, s.z);
+    dummy.rotation.set(0, s.yaw + (Math.random() - 0.5) * 0.4, 0);
+    const sc = 0.92 + Math.random() * 0.16;
+    dummy.scale.setScalar(sc);
+    dummy.updateMatrix();
+    const shirt = pick(SHIRT);
+    const partColors = {
+      torso: shirt, armL: shirt, armR: shirt,
+      lap: pick(TROUSER), head: pick(SKIN), hair: pick(HAIR)
+    };
+    for (const k in meshes) {
+      offM.makeTranslation(parts[k].off[0], parts[k].off[1], parts[k].off[2]);
+      partM.copy(dummy.matrix).multiply(offM);
+      meshes[k].setMatrixAt(i, partM);
+      meshes[k].setColorAt(i, color.set(partColors[k]));
+    }
+    if (i % 9 === 0) {
+      plumbobSeats.push({ x: s.x, z: s.z, y: 1.78 * sc, phase: Math.random() * Math.PI * 2 });
+    }
+  });
+  for (const k in meshes) {
+    meshes[k].instanceMatrix.needsUpdate = true;
+    if (meshes[k].instanceColor) meshes[k].instanceColor.needsUpdate = true;
+  }
+
+  const plumbobGeo = new THREE.OctahedronGeometry(0.09);
+  plumbobGeo.scale(1, 1.5, 1);
+  const plumbobs = new THREE.InstancedMesh(
+    plumbobGeo,
+    new THREE.MeshBasicMaterial({ color: 0x39d353 }),
+    plumbobSeats.length
+  );
+  scene.add(plumbobs);
+  updatePlumbobs = (t) => {
+    plumbobSeats.forEach((p, i) => {
+      dummy.position.set(p.x, p.y + Math.sin(t * 2 + p.phase) * 0.03, p.z);
+      dummy.rotation.set(0, t * 1.5 + p.phase, 0);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      plumbobs.setMatrixAt(i, dummy.matrix);
+    });
+    plumbobs.instanceMatrix.needsUpdate = true;
+  };
+  updatePlumbobs(0);
+}
 
 // ---------------------------------------------------------------------------
 // Lobby corridor and shared shell
@@ -855,7 +981,10 @@ function parseInput(raw) {
 function updateNowPlaying(i) {
   const li = document.getElementById('np-' + i);
   const data = players[i] && players[i].getVideoData ? players[i].getVideoData() : null;
-  if (data && data.title) li.textContent = ROOMS[i].name + ': ' + data.title;
+  if (data && data.title) {
+    li.textContent = ROOMS[i].name + ': ' + data.title;
+    marquees[i].draw(data.title);
+  }
 }
 
 function applyAudio() {
@@ -1107,7 +1236,7 @@ addEventListener('resize', () => {
 });
 
 // Dev/test hook
-window.__cinema = { camera, controls, roomBoxes, parseInput };
+window.__cinema = { camera, controls, roomBoxes, parseInput, marquees };
 
 // ---------------------------------------------------------------------------
 // Render loop
@@ -1119,11 +1248,12 @@ function animate() {
   updateMovement(dt);
   checkRoomChange();
   if (!reducedMotion) {
-    // Gentle projector-style shimmer on the screen lights
+    // Gentle projector-style shimmer on the screen lights, spinning plumbobs
     flickerT += dt;
     screenLights.forEach((l, i) => {
       l.intensity = 40 + Math.sin(flickerT * 1.7 + i * 1.3) * 3;
     });
+    if (updatePlumbobs) updatePlumbobs(flickerT);
   }
   glRenderer.render(scene, camera);
   cssRenderer.render(cssScene, camera);
