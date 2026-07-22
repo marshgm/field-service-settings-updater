@@ -427,6 +427,14 @@ document.getElementById('css3d').appendChild(cssRenderer.domElement);
 // ---------------------------------------------------------------------------
 const wallMat = new THREE.MeshStandardMaterial({ color: 0x241a26, roughness: 0.95 });
 const carpetMat = new THREE.MeshStandardMaterial({ color: 0x461219, roughness: 1 });
+// Modern, light concourse finishes — with purple/blue accent lighting to
+// match the Scottish Summit branding
+const concourseWallMat = new THREE.MeshStandardMaterial({ color: 0xe8e5ef, roughness: 0.85 });
+const concourseFloorMat = new THREE.MeshStandardMaterial({ color: 0xcdcad6, roughness: 0.6 });
+const ledMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const purpleLedMat = new THREE.MeshBasicMaterial({ color: 0xa763e8 });
+const blueLedMat = new THREE.MeshBasicMaterial({ color: 0x4f8fe8 });
+const stageMat = new THREE.MeshStandardMaterial({ color: 0x4a2f1b, roughness: 0.8 });
 const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x120c14, roughness: 1 });
 const curtainMat = new THREE.MeshStandardMaterial({ color: 0x5e1220, roughness: 0.9 });
 // Seat upholstery: a navy/purple tartan with white pinstripes, drawn
@@ -591,6 +599,11 @@ function buildRoom(room, index) {
   addCollider(-ROOM_HW, ROOM_HD, -DOOR_HW, ROOM_HD + 0.4, room.yaw, room.center);
   addCollider(DOOR_HW, ROOM_HD, ROOM_HW, ROOM_HD + 0.4, room.yaw, room.center);
 
+  // Stage below the screen, with a lit front edge
+  boxMesh(g, 12.5, 0.6, 2.6, 0, 0.3, -7.2, stageMat);
+  boxMesh(g, 12.5, 0.05, 0.06, 0, 0.62, -5.88, trimMat);
+  addCollider(-6.25, -8.5, 6.25, -5.85, room.yaw, room.center);
+
   // Screen frame and curtains
   boxMesh(g, SCREEN_W + 1, SCREEN_H + 1, 0.1, 0, SCREEN_Y, SCREEN_LZ - 0.08, frameMat);
   boxMesh(g, 1.4, CEIL_H - 0.5, 0.7, -ROOM_HW + 0.9, (CEIL_H - 0.5) / 2, SCREEN_LZ + 0.5, curtainMat);
@@ -619,9 +632,15 @@ function buildRoom(room, index) {
     }
   }
 
+  // Light cladding on the concourse side of the door wall, so the corridor
+  // reads modern and bright while the room interior stays dark
+  boxMesh(g, segW, CEIL_H, 0.08, -(DOOR_HW + segW / 2), CEIL_H / 2, ROOM_HD + 0.35, concourseWallMat);
+  boxMesh(g, segW, CEIL_H, 0.08, DOOR_HW + segW / 2, CEIL_H / 2, ROOM_HD + 0.35, concourseWallMat);
+  boxMesh(g, DOOR_HW * 2, CEIL_H - DOOR_H, 0.08, 0, DOOR_H + (CEIL_H - DOOR_H) / 2, ROOM_HD + 0.35, concourseWallMat);
+
   // Marquee above the door on the lobby side — year + what's playing
   const marquee = makeMarquee(room.sign);
-  marquee.mesh.position.set(0, 4.35, ROOM_HD + 0.4);
+  marquee.mesh.position.set(0, 4.35, ROOM_HD + 0.45);
   g.add(marquee.mesh);
   marquees.push(marquee);
 
@@ -675,10 +694,8 @@ ROOMS.forEach(buildRoom);
 
 // ---------------------------------------------------------------------------
 // Audience — every seat filled with a little Sims-style local. Six instanced
-// meshes render all ~300 of them in six draw calls, and roughly one in nine
-// gets the tell-tale spinning plumbob.
+// meshes render all ~300 of them in six draw calls.
 // ---------------------------------------------------------------------------
-let updatePlumbobs = null;
 {
   const n = audienceSeats.length;
   const SKIN = ['#f2c6a0', '#e0ac69', '#c68642', '#8d5524', '#ffdbac'];
@@ -725,34 +742,11 @@ let updatePlumbobs = null;
       meshes[k].setMatrixAt(i, partM);
       meshes[k].setColorAt(i, color.set(partColors[k]));
     }
-    if (i % 9 === 0) {
-      plumbobSeats.push({ x: s.x, z: s.z, y: 1.78 * sc, phase: Math.random() * Math.PI * 2 });
-    }
   });
   for (const k in meshes) {
     meshes[k].instanceMatrix.needsUpdate = true;
     if (meshes[k].instanceColor) meshes[k].instanceColor.needsUpdate = true;
   }
-
-  const plumbobGeo = new THREE.OctahedronGeometry(0.09);
-  plumbobGeo.scale(1, 1.5, 1);
-  const plumbobs = new THREE.InstancedMesh(
-    plumbobGeo,
-    new THREE.MeshBasicMaterial({ color: 0x39d353 }),
-    plumbobSeats.length
-  );
-  scene.add(plumbobs);
-  updatePlumbobs = (t) => {
-    plumbobSeats.forEach((p, i) => {
-      dummy.position.set(p.x, p.y + Math.sin(t * 2 + p.phase) * 0.03, p.z);
-      dummy.rotation.set(0, t * 1.5 + p.phase, 0);
-      dummy.scale.setScalar(1);
-      dummy.updateMatrix();
-      plumbobs.setMatrixAt(i, dummy.matrix);
-    });
-    plumbobs.instanceMatrix.needsUpdate = true;
-  };
-  updatePlumbobs(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -767,9 +761,18 @@ ceiling.rotation.x = Math.PI / 2;
 ceiling.position.set(0, CEIL_H, 29.5);
 scene.add(ceiling);
 
+// The concourse: a modern, light-finished corridor. Overlay a pale floor and
+// ceiling over the corridor strip (the big planes underneath serve the dark
+// rooms), and build its walls in the light finish.
+boxMesh(scene, 7, 0.04, 63, 0, 0.02, 29.5, concourseFloorMat);
+boxMesh(scene, 7, 0.04, 63, 0, CEIL_H - 0.02, 29.5, concourseWallMat);
+// Twin LED light strips running the length of the ceiling
+boxMesh(scene, 0.35, 0.04, 62, -1.8, CEIL_H - 0.06, 29.5, ledMat);
+boxMesh(scene, 0.35, 0.04, 62, 1.8, CEIL_H - 0.06, 29.5, ledMat);
+
 // Corridor wall segments where no room door adjoins, plus the two end walls
 function corridorWall(x, z1, z2) {
-  boxMesh(scene, 0.3, CEIL_H, z2 - z1, x, CEIL_H / 2, (z1 + z2) / 2, wallMat);
+  boxMesh(scene, 0.3, CEIL_H, z2 - z1, x, CEIL_H / 2, (z1 + z2) / 2, concourseWallMat);
   addCollider(x - 0.3, z1, x + 0.3, z2);
 }
 corridorWall(-3.5, -2, 0);
@@ -780,25 +783,28 @@ corridorWall(3.5, -2, 9);
 corridorWall(3.5, 23, 27);
 corridorWall(3.5, 41, 45);
 corridorWall(3.5, 59, 61);
-boxMesh(scene, 7.6, CEIL_H, 0.3, 0, CEIL_H / 2, -2, wallMat);
+boxMesh(scene, 7.6, CEIL_H, 0.3, 0, CEIL_H / 2, -2, concourseWallMat);
 addCollider(-3.8, -2.3, 3.8, -1.8);
-boxMesh(scene, 7.6, CEIL_H, 0.3, 0, CEIL_H / 2, 61, wallMat);
+boxMesh(scene, 7.6, CEIL_H, 0.3, 0, CEIL_H / 2, 61, concourseWallMat);
 addCollider(-3.8, 60.8, 3.8, 61.3);
 
-// Lobby dressing: welcome sign, guide lights along the corridor
+// Lobby dressing: welcome sign, and vertical purple/blue LED bars along the
+// walls — Scottish Summit colours
 const lobbySign = makeSign('NOW SHOWING');
 lobbySign.position.set(0, 4.2, 60.8);
 lobbySign.rotation.y = Math.PI;
 scene.add(lobbySign);
-for (const z of [4, 21, 38, 55]) {
-  boxMesh(scene, 0.15, 0.5, 0.15, -3.3, 3.2, z, trimMat);
-  boxMesh(scene, 0.15, 0.5, 0.15, 3.3, 3.2, z, trimMat);
-}
-for (const z of [2, 16, 30, 44, 58]) {
-  const l = new THREE.PointLight(0xffc46b, 35, 18, 1.6);
+[4, 21, 38, 55].forEach((z, i) => {
+  const barMat = i % 2 ? blueLedMat : purpleLedMat;
+  boxMesh(scene, 0.1, 2.4, 0.1, -3.32, 3.2, z, barMat);
+  boxMesh(scene, 0.1, 2.4, 0.1, 3.32, 3.2, z, i % 2 ? purpleLedMat : blueLedMat);
+});
+// Alternating purple and blue wash lights down the concourse
+[2, 16, 30, 44, 58].forEach((z, i) => {
+  const l = new THREE.PointLight(i % 2 ? 0x4f8fe8 : 0xa763e8, 40, 20, 1.5);
   l.position.set(0, 6.5, z);
   scene.add(l);
-}
+});
 scene.add(new THREE.AmbientLight(0x4a4258, 1.0));
 
 // ---------------------------------------------------------------------------
@@ -1248,12 +1254,11 @@ function animate() {
   updateMovement(dt);
   checkRoomChange();
   if (!reducedMotion) {
-    // Gentle projector-style shimmer on the screen lights, spinning plumbobs
+    // Gentle projector-style shimmer on the screen lights
     flickerT += dt;
     screenLights.forEach((l, i) => {
       l.intensity = 40 + Math.sin(flickerT * 1.7 + i * 1.3) * 3;
     });
-    if (updatePlumbobs) updatePlumbobs(flickerT);
   }
   glRenderer.render(scene, camera);
   cssRenderer.render(cssScene, camera);
