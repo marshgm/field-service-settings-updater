@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YouTube Cinema World — walk around a 3D cinema and watch playlists</title>
+<title>YouTube Cinema World — a five-screen multiplex you can walk around</title>
 <style>
   :root {
     --bg: #0b0710;
@@ -26,13 +26,13 @@
     overflow: hidden;
   }
 
-  /* 3D layers: CSS3D (YouTube iframe) underneath, WebGL canvas on top.
-     The WebGL scene punches a transparent hole where the cinema screen is,
-     so the iframe shows through in correct 3D perspective. */
+  /* 3D layers: CSS3D (YouTube iframes) underneath, WebGL canvas on top.
+     The WebGL scene punches transparent holes where the cinema screens are,
+     so each iframe shows through in correct 3D perspective. */
   #css3d, #webgl { position: fixed; inset: 0; }
   #css3d { z-index: 1; }
   #webgl { z-index: 2; }
-  /* While the menu is open, let clicks pass through to the YouTube iframe so
+  /* While the menu is open, let clicks pass through to the YouTube iframes so
      users can operate YouTube's own controls (play, captions, volume). */
   body.menu-open #webgl { pointer-events: none; }
 
@@ -54,19 +54,29 @@
     z-index: 10;
     top: 0; left: 0;
     height: 100dvh;
-    width: min(24rem, 100vw);
+    width: min(26rem, 100vw);
     overflow-y: auto;
     padding: 1.25rem;
-    background: color-mix(in srgb, var(--card) 92%, transparent);
+    background: color-mix(in srgb, var(--card) 93%, transparent);
     border-right: 1px solid var(--card-border);
     backdrop-filter: blur(6px);
   }
   body.locked main#panel { display: none; }
 
   h1 { font-size: 1.35rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.4rem; }
   .tagline { margin: 0 0 1rem; color: var(--text-dim); font-size: 0.95rem; }
 
-  label { display: block; font-weight: 600; margin-bottom: 0.3rem; }
+  fieldset {
+    border: 1px solid var(--card-border);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    margin: 0 0 0.75rem;
+  }
+  legend { font-weight: 700; padding: 0 0.35rem; }
+  .screen-field { margin-bottom: 0.7rem; }
+  .screen-field:last-child { margin-bottom: 0; }
+  label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
   .hint { font-size: 0.85rem; color: var(--text-dim); margin: 0.3rem 0 0; }
   input[type="text"] {
     width: 100%;
@@ -75,18 +85,22 @@
     background: #0e0a15;
     border: 1px solid #5a5170;
     border-radius: 0.375rem;
-    padding: 0.55rem 0.65rem;
+    padding: 0.5rem 0.65rem;
   }
   input[type="text"]::placeholder { color: #9d94b3; }
 
   .error {
     display: none;
-    margin: 0.4rem 0 0;
+    margin: 0.3rem 0 0;
     color: #ffb3b5;
-    font-size: 0.9rem;
+    font-size: 0.88rem;
   }
   .error.visible { display: block; }
   input[aria-invalid="true"] { border-color: #ff8589; }
+
+  .checkbox-row { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.75rem 0 0; }
+  .checkbox-row input { width: 1.15rem; height: 1.15rem; margin-top: 0.2rem; flex: none; }
+  .checkbox-row label { font-weight: 400; margin: 0; font-size: 0.92rem; }
 
   .btn {
     font: inherit;
@@ -97,7 +111,7 @@
     min-height: 2.75rem;
     cursor: pointer;
   }
-  .btn-primary { background: var(--accent); color: var(--accent-text); width: 100%; margin-top: 0.75rem; }
+  .btn-primary { background: var(--accent); color: var(--accent-text); width: 100%; margin-top: 0.25rem; }
   .btn-secondary { background: transparent; color: var(--text); border-color: #5a5170; width: 100%; margin-top: 0.5rem; }
 
   :focus-visible {
@@ -121,8 +135,10 @@
     border: 1px solid var(--card-border);
     border-radius: 0.375rem;
     font-size: 0.92rem;
-    min-height: 2.5rem;
   }
+  .now-playing ul { list-style: none; padding: 0; margin: 0; }
+  .now-playing li { margin-bottom: 0.3rem; }
+  .now-playing li:last-child { margin-bottom: 0; }
 
   /* Heads-up display while walking (decorative for AT; real controls live in the panel) */
   #hud { position: fixed; inset: 0; z-index: 5; pointer-events: none; display: none; }
@@ -146,6 +162,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  #hud .location {
+    position: absolute; top: 1rem; left: 50%; transform: translateX(-50%);
+    background: rgba(10, 6, 16, 0.8);
+    color: var(--text);
+    padding: 0.35rem 0.9rem;
+    border-radius: 2rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
 
   #status {
     position: fixed;
@@ -160,58 +185,95 @@
     font-size: 0.92rem;
   }
   #status:empty { display: none; }
-
-  .visually-hidden {
-    position: absolute; width: 1px; height: 1px;
-    padding: 0; margin: -1px; overflow: hidden;
-    clip: rect(0 0 0 0); white-space: nowrap; border: 0;
-  }
 </style>
 </head>
 <body class="menu-open">
 
-<a class="skip-link" href="#playlist-input">Skip to playlist controls</a>
+<a class="skip-link" href="#playlist-0">Skip to playlist controls</a>
 
-<div id="css3d" aria-hidden="false"></div>
+<div id="css3d"></div>
 
-<main id="panel" aria-label="Cinema controls">
+<main id="panel" aria-label="Multiplex controls">
   <h1>YouTube Cinema World</h1>
-  <p class="tagline">Load a YouTube playlist onto the big screen, then walk around the cinema in 3D.</p>
+  <p class="tagline">A five-screen multiplex. Give each screen its own YouTube playlist, then walk the lobby and wander into whichever room takes your fancy — you hear the screen of the room you're in.</p>
 
   <form id="playlist-form" novalidate>
-    <label for="playlist-input">YouTube playlist or video link</label>
-    <input type="text" id="playlist-input" name="playlist" autocomplete="off"
-           spellcheck="false" aria-describedby="playlist-hint playlist-error"
-           placeholder="https://www.youtube.com/playlist?list=PL…">
-    <p class="hint" id="playlist-hint">Paste a playlist URL, a video URL, or just the playlist ID (starts with “PL”).</p>
-    <p class="error" id="playlist-error" role="alert"></p>
-    <button type="submit" class="btn btn-primary" id="load-btn">Load onto the big screen</button>
+    <fieldset>
+      <legend>Playlists — one per screen</legend>
+      <div class="screen-field">
+        <label for="playlist-0">Screen 1</label>
+        <input type="text" id="playlist-0" autocomplete="off" spellcheck="false"
+               aria-describedby="error-0 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-0"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-1">Screen 2</label>
+        <input type="text" id="playlist-1" autocomplete="off" spellcheck="false"
+               aria-describedby="error-1 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-1"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-2">Screen 3</label>
+        <input type="text" id="playlist-2" autocomplete="off" spellcheck="false"
+               aria-describedby="error-2 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-2"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-3">Screen 4</label>
+        <input type="text" id="playlist-3" autocomplete="off" spellcheck="false"
+               aria-describedby="error-3 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-3"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-4">Screen 5</label>
+        <input type="text" id="playlist-4" autocomplete="off" spellcheck="false"
+               aria-describedby="error-4 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-4"></p>
+      </div>
+      <p class="hint" id="form-hint">Paste a playlist URL, a video URL, or a bare playlist ID (starts with “PL”). Leave a screen blank to keep that room dark.</p>
+    </fieldset>
+    <button type="submit" class="btn btn-primary" id="load-btn">Load the screens</button>
   </form>
 
-  <button type="button" class="btn btn-secondary" id="enter-btn">Enter cinema (mouse look + WASD)</button>
-  <p class="hint">While this menu is open you can also click the on-screen YouTube player directly to use its own play, captions and volume controls.</p>
+  <div class="checkbox-row">
+    <input type="checkbox" id="perf-mode">
+    <label for="perf-mode">Performance mode — pause the screens in rooms I'm not in (kinder to slower machines)</label>
+  </div>
 
-  <div class="now-playing" id="now-playing" aria-live="off">Nothing playing yet.</div>
+  <button type="button" class="btn btn-secondary" id="enter-btn">Enter the multiplex (mouse look + WASD)</button>
+  <p class="hint">While this menu is open you can also click any on-screen player directly to use YouTube's own play, captions and volume controls.</p>
 
-  <details open>
+  <div class="now-playing">
+    <h2>Now showing</h2>
+    <ul id="now-list">
+      <li id="np-0">Screen 1: nothing loaded</li>
+      <li id="np-1">Screen 2: nothing loaded</li>
+      <li id="np-2">Screen 3: nothing loaded</li>
+      <li id="np-3">Screen 4: nothing loaded</li>
+      <li id="np-4">Screen 5: nothing loaded</li>
+    </ul>
+  </div>
+
+  <details>
     <summary>Controls</summary>
     <ul>
       <li><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrow keys — walk</li>
       <li><kbd>Shift</kbd> — walk faster</li>
       <li>Mouse — look around</li>
-      <li><kbd>Space</kbd> — play / pause</li>
-      <li><kbd>N</kbd> / <kbd>P</kbd> — next / previous video</li>
+      <li><kbd>Space</kbd> — play / pause the room you're in</li>
+      <li><kbd>N</kbd> / <kbd>P</kbd> — next / previous video in this room</li>
       <li><kbd>M</kbd> — mute / unmute</li>
       <li><kbd>-</kbd> / <kbd>=</kbd> — volume down / up</li>
       <li><kbd>Esc</kbd> — leave the walk and reopen this menu</li>
     </ul>
-    <p class="hint">Single-key shortcuts are only active while you are walking (pointer locked); they are disabled when this menu is open.</p>
-    <p class="hint">Captions: open this menu with <kbd>Esc</kbd>, then click the CC button on the on-screen player.</p>
+    <p class="hint">Single-key shortcuts are only active while you are walking (pointer locked); they are disabled when this menu is open. Audio follows you: only the room you're standing in is unmuted.</p>
+    <p class="hint">Captions: open this menu with <kbd>Esc</kbd>, then click the CC button on that room's player.</p>
   </details>
 </main>
 
 <div id="hud" aria-hidden="true">
   <div id="crosshair"></div>
+  <div class="location" id="hud-location">Lobby</div>
   <div class="keys">Esc menu · Space play/pause · N/P next/prev · M mute</div>
 </div>
 
@@ -232,23 +294,39 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const UP = new THREE.Vector3(0, 1, 0);
 
 // ---------------------------------------------------------------------------
-// Room layout constants (metres)
+// Multiplex layout (metres).
+// A central lobby corridor runs along z; five rooms branch off it, three on
+// the west side and two on the east. Each room is built in a local frame
+// (screen at local -z, door centred in the local +z wall) and then rotated
+// into place, so one builder serves every room.
 // ---------------------------------------------------------------------------
-const ROOM = { minX: -12, maxX: 12, minZ: -16, maxZ: 14, height: 12 };
-const SCREEN = { width: 16, height: 9, centerY: 5.8, z: ROOM.minZ + 0.3 };
+const ROOM_HW = 7;      // local half-width  (x)
+const ROOM_HD = 8.5;    // local half-depth  (z)
+const CEIL_H = 8.5;
+const DOOR_HW = 1.3;    // door half-width
+const DOOR_H = 3.2;
+const SCREEN_W = 11, SCREEN_H = 6.19, SCREEN_Y = 4.0, SCREEN_LZ = -8.2;
 const EYE_HEIGHT = 1.7;
 const PLAYER_RADIUS = 0.35;
+const WORLD = { minX: -20.2, maxX: 20.2, minZ: -1.7, maxZ: 51.7 };
+
+const ROOMS = [
+  { name: 'Screen 1', center: new THREE.Vector3(-12, 0, 7),  yaw:  Math.PI / 2 },
+  { name: 'Screen 2', center: new THREE.Vector3( 12, 0, 16), yaw: -Math.PI / 2 },
+  { name: 'Screen 3', center: new THREE.Vector3(-12, 0, 25), yaw:  Math.PI / 2 },
+  { name: 'Screen 4', center: new THREE.Vector3( 12, 0, 34), yaw: -Math.PI / 2 },
+  { name: 'Screen 5', center: new THREE.Vector3(-12, 0, 43), yaw:  Math.PI / 2 },
+];
 
 // ---------------------------------------------------------------------------
 // Renderers and scenes
 // ---------------------------------------------------------------------------
 const scene = new THREE.Scene();
-scene.background = null;
-
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 100);
-camera.position.set(0, EYE_HEIGHT, 12.5);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 150);
+camera.position.set(0, EYE_HEIGHT, 50.5);
 
 const glRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 glRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -263,148 +341,225 @@ cssRenderer.setSize(innerWidth, innerHeight);
 document.getElementById('css3d').appendChild(cssRenderer.domElement);
 
 // ---------------------------------------------------------------------------
-// The cinema screen: a DOM element in CSS3D space + a hole-punch mesh in WebGL
-// ---------------------------------------------------------------------------
-const SCREEN_PX_W = 1280, SCREEN_PX_H = 720;
-
-const screenEl = document.createElement('div');
-screenEl.id = 'screen-surface';
-screenEl.style.width = SCREEN_PX_W + 'px';
-screenEl.style.height = SCREEN_PX_H + 'px';
-screenEl.style.background = '#000';
-const playerMount = document.createElement('div');
-playerMount.id = 'yt-player';
-screenEl.appendChild(playerMount);
-
-const cssScreen = new CSS3DObject(screenEl);
-cssScreen.position.set(0, SCREEN.centerY, SCREEN.z);
-cssScreen.scale.setScalar(SCREEN.width / SCREEN_PX_W);
-cssScene.add(cssScreen);
-
-// Transparent hole in the WebGL canvas so the iframe underneath shows through,
-// while still writing depth so 3D objects occlude correctly.
-const holeMesh = new THREE.Mesh(
-  new THREE.PlaneGeometry(SCREEN.width, SCREEN.height),
-  new THREE.MeshBasicMaterial({
-    color: 0x000000,
-    opacity: 0,
-    transparent: true,
-    blending: THREE.NoBlending,
-    side: THREE.DoubleSide
-  })
-);
-holeMesh.position.copy(cssScreen.position);
-scene.add(holeMesh);
-
-// ---------------------------------------------------------------------------
-// Cinema geometry
+// Materials
 // ---------------------------------------------------------------------------
 const wallMat = new THREE.MeshStandardMaterial({ color: 0x241a26, roughness: 0.95 });
 const carpetMat = new THREE.MeshStandardMaterial({ color: 0x461219, roughness: 1 });
 const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x120c14, roughness: 1 });
 const curtainMat = new THREE.MeshStandardMaterial({ color: 0x5e1220, roughness: 0.9 });
 const seatMat = new THREE.MeshStandardMaterial({ color: 0x7a1626, roughness: 0.85 });
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x060406 });
 const trimMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
-
-const roomW = ROOM.maxX - ROOM.minX;
-const roomD = ROOM.maxZ - ROOM.minZ;
-const roomCZ = (ROOM.minZ + ROOM.maxZ) / 2;
-
-function addBox(w, h, d, x, y, z, mat) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  m.position.set(x, y, z);
-  scene.add(m);
-  return m;
-}
-
-// Floor, ceiling, walls
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(roomW, roomD), carpetMat);
-floor.rotation.x = -Math.PI / 2;
-floor.position.set(0, 0, roomCZ);
-scene.add(floor);
-
-const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(roomW, roomD), ceilingMat);
-ceiling.rotation.x = Math.PI / 2;
-ceiling.position.set(0, ROOM.height, roomCZ);
-scene.add(ceiling);
-
-addBox(roomW, ROOM.height, 0.3, 0, ROOM.height / 2, ROOM.minZ - 0.15, wallMat); // screen wall
-addBox(roomW, ROOM.height, 0.3, 0, ROOM.height / 2, ROOM.maxZ + 0.15, wallMat); // back wall
-addBox(0.3, ROOM.height, roomD, ROOM.minX - 0.15, ROOM.height / 2, roomCZ, wallMat);
-addBox(0.3, ROOM.height, roomD, ROOM.maxX + 0.15, ROOM.height / 2, roomCZ, wallMat);
-
-// Screen surround: matte black frame and red curtains either side
-addBox(SCREEN.width + 1.2, SCREEN.height + 1.2, 0.1, 0, SCREEN.centerY, SCREEN.z - 0.06, new THREE.MeshStandardMaterial({ color: 0x060406 }));
-addBox(2.2, ROOM.height - 1, 0.8, ROOM.minX + 2.2, (ROOM.height - 1) / 2, SCREEN.z + 0.5, curtainMat);
-addBox(2.2, ROOM.height - 1, 0.8, ROOM.maxX - 2.2, (ROOM.height - 1) / 2, SCREEN.z + 0.5, curtainMat);
-
-// Aisle lighting strips along the centre aisle
-addBox(0.08, 0.02, roomD - 4, -1.25, 0.02, roomCZ + 1, trimMat);
-addBox(0.08, 0.02, roomD - 4, 1.25, 0.02, roomCZ + 1, trimMat);
-
-// Seats: two blocks either side of a centre aisle, plus colliders
-const colliders = [];
 const seatGeo = new THREE.BoxGeometry(0.85, 0.55, 0.8);
 const backGeo = new THREE.BoxGeometry(0.85, 0.75, 0.16);
-const seatRows = [];
-for (let z = -6; z <= 12; z += 2.2) seatRows.push(z);
-
-const occupiedSeats = [];
-for (const rowZ of seatRows) {
-  for (const side of [-1, 1]) {
-    const xStart = side * 1.9;
-    const xEnd = side * 10.1;
-    const step = 0.95 * side;
-    for (let x = xStart; Math.abs(x) <= Math.abs(xEnd); x += step) {
-      const seat = new THREE.Mesh(seatGeo, seatMat);
-      seat.position.set(x, 0.28, rowZ);
-      scene.add(seat);
-      const back = new THREE.Mesh(backGeo, seatMat);
-      back.position.set(x, 0.9, rowZ + 0.32);
-      scene.add(back);
-      if (Math.random() < 0.18) occupiedSeats.push({ x, z: rowZ });
-    }
-    // One collider per seat block per row
-    const minX = Math.min(xStart, xEnd) - 0.5;
-    const maxX = Math.max(xStart, xEnd) + 0.5;
-    colliders.push(new THREE.Box3(
-      new THREE.Vector3(minX, 0, rowZ - 0.5),
-      new THREE.Vector3(maxX, 1.6, rowZ + 0.5)
-    ));
-  }
-}
-
-// A scattered audience of low-poly figures already in their seats
 const bodyGeo = new THREE.BoxGeometry(0.5, 0.62, 0.4);
 const headGeo = new THREE.SphereGeometry(0.16, 12, 10);
 const audienceColors = [0x2c3550, 0x33502c, 0x50462c, 0x3d2c50, 0x4a3038];
-for (const seat of occupiedSeats) {
-  const mat = new THREE.MeshStandardMaterial({
-    color: audienceColors[Math.floor(Math.random() * audienceColors.length)],
-    roughness: 1
-  });
-  const body = new THREE.Mesh(bodyGeo, mat);
-  body.position.set(seat.x, 0.87, seat.z);
-  scene.add(body);
-  const head = new THREE.Mesh(headGeo, new THREE.MeshStandardMaterial({ color: 0x8a6f5c, roughness: 1 }));
-  head.position.set(seat.x, 1.34, seat.z);
-  scene.add(head);
+
+const colliders = [];
+
+function boxMesh(parent, w, h, d, x, y, z, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  parent.add(m);
+  return m;
 }
 
-// Wall sconces (emissive boxes; only two real point lights for performance)
-for (const z of [-8, 0, 8]) {
-  for (const x of [ROOM.minX + 0.3, ROOM.maxX - 0.3]) {
-    addBox(0.15, 0.5, 0.15, x, 3.2, z, trimMat);
+// Transform a local ground-plane rectangle into a world-space collider box.
+// Yaws are multiples of 90 degrees, so the result stays axis-aligned.
+function addCollider(minX, minZ, maxX, maxZ, yaw = 0, center = null) {
+  const a = new THREE.Vector3(minX, 0, minZ);
+  const b = new THREE.Vector3(maxX, 0, maxZ);
+  if (yaw) { a.applyAxisAngle(UP, yaw); b.applyAxisAngle(UP, yaw); }
+  if (center) { a.add(center); b.add(center); }
+  colliders.push(new THREE.Box3().setFromPoints([a, b]));
+}
+
+function makeSign(text) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1c0510';
+  g.fillRect(0, 0, 512, 128);
+  g.strokeStyle = '#ffc46b';
+  g.lineWidth = 6;
+  g.strokeRect(8, 8, 496, 112);
+  g.fillStyle = '#ffd9a0';
+  g.font = 'bold 64px system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, 256, 68);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(
+    new THREE.PlaneGeometry(2.8, 0.7),
+    new THREE.MeshBasicMaterial({ map: tex })
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Room builder — geometry, colliders, screen hole + CSS3D player surface
+// ---------------------------------------------------------------------------
+const SCREEN_PX_W = 960, SCREEN_PX_H = 540;
+const screenLights = [];
+const roomBoxes = []; // world-space interior boxes for "which room am I in"
+
+function buildRoom(room, index) {
+  const g = new THREE.Group();
+  g.position.copy(room.center);
+  g.rotation.y = room.yaw;
+  scene.add(g);
+
+  // Walls: screen wall, two side walls, door wall in two segments + lintel
+  boxMesh(g, ROOM_HW * 2, CEIL_H, 0.3, 0, CEIL_H / 2, -ROOM_HD - 0.15, wallMat);
+  boxMesh(g, 0.3, CEIL_H, ROOM_HD * 2, -ROOM_HW - 0.15, CEIL_H / 2, 0, wallMat);
+  boxMesh(g, 0.3, CEIL_H, ROOM_HD * 2, ROOM_HW + 0.15, CEIL_H / 2, 0, wallMat);
+  const segW = ROOM_HW - DOOR_HW;
+  boxMesh(g, segW, CEIL_H, 0.3, -(DOOR_HW + segW / 2), CEIL_H / 2, ROOM_HD + 0.15, wallMat);
+  boxMesh(g, segW, CEIL_H, 0.3, DOOR_HW + segW / 2, CEIL_H / 2, ROOM_HD + 0.15, wallMat);
+  boxMesh(g, DOOR_HW * 2, CEIL_H - DOOR_H, 0.3, 0, DOOR_H + (CEIL_H - DOOR_H) / 2, ROOM_HD + 0.15, wallMat);
+
+  addCollider(-ROOM_HW, -ROOM_HD - 0.4, ROOM_HW, -ROOM_HD, room.yaw, room.center);
+  addCollider(-ROOM_HW - 0.4, -ROOM_HD, -ROOM_HW, ROOM_HD, room.yaw, room.center);
+  addCollider(ROOM_HW, -ROOM_HD, ROOM_HW + 0.4, ROOM_HD, room.yaw, room.center);
+  addCollider(-ROOM_HW, ROOM_HD, -DOOR_HW, ROOM_HD + 0.4, room.yaw, room.center);
+  addCollider(DOOR_HW, ROOM_HD, ROOM_HW, ROOM_HD + 0.4, room.yaw, room.center);
+
+  // Screen frame and curtains
+  boxMesh(g, SCREEN_W + 1, SCREEN_H + 1, 0.1, 0, SCREEN_Y, SCREEN_LZ - 0.08, frameMat);
+  boxMesh(g, 1.4, CEIL_H - 0.5, 0.7, -ROOM_HW + 0.9, (CEIL_H - 0.5) / 2, SCREEN_LZ + 0.5, curtainMat);
+  boxMesh(g, 1.4, CEIL_H - 0.5, 0.7, ROOM_HW - 0.9, (CEIL_H - 0.5) / 2, SCREEN_LZ + 0.5, curtainMat);
+
+  // Aisle strips leading from the door to the screen
+  boxMesh(g, 0.08, 0.02, ROOM_HD * 2 - 3, -1.25, 0.02, 1, trimMat);
+  boxMesh(g, 0.08, 0.02, ROOM_HD * 2 - 3, 1.25, 0.02, 1, trimMat);
+
+  // Seats in two blocks either side of the centre aisle, plus an audience
+  for (let row = 0; row < 5; row++) {
+    const rowZ = -2.5 + row * 1.9;
+    for (const side of [-1, 1]) {
+      for (let s = 0; s < 5; s++) {
+        const x = side * (1.6 + s * 0.95);
+        const seat = new THREE.Mesh(seatGeo, seatMat);
+        seat.position.set(x, 0.28, rowZ);
+        g.add(seat);
+        const back = new THREE.Mesh(backGeo, seatMat);
+        back.position.set(x, 0.9, rowZ + 0.32);
+        g.add(back);
+        if (Math.random() < 0.16) {
+          const mat = new THREE.MeshStandardMaterial({
+            color: audienceColors[Math.floor(Math.random() * audienceColors.length)],
+            roughness: 1
+          });
+          const body = new THREE.Mesh(bodyGeo, mat);
+          body.position.set(x, 0.87, rowZ);
+          g.add(body);
+          const head = new THREE.Mesh(headGeo, new THREE.MeshStandardMaterial({ color: 0x8a6f5c, roughness: 1 }));
+          head.position.set(x, 1.34, rowZ);
+          g.add(head);
+        }
+      }
+      addCollider(side === -1 ? -6.5 : 1.2, rowZ - 0.55, side === -1 ? -1.2 : 6.5, rowZ + 0.55, room.yaw, room.center);
+    }
   }
+
+  // Sign above the door on the lobby side
+  const sign = makeSign(room.name.toUpperCase());
+  sign.position.set(0, 3.9, ROOM_HD + 0.4);
+  g.add(sign);
+
+  // Screen light (the "projector glow")
+  const light = new THREE.PointLight(0xbfd4ff, 40, 20, 1.8);
+  light.position.set(0, SCREEN_Y, SCREEN_LZ + 4).applyAxisAngle(UP, room.yaw).add(room.center);
+  scene.add(light);
+  screenLights.push(light);
+
+  // The YouTube surface: CSS3D element + transparent hole in the WebGL canvas.
+  // The hole material writes premultiplied-valid (0,0,0,0) so the iframe
+  // underneath shows through.
+  const el = document.createElement('div');
+  el.className = 'screen-surface';
+  el.style.width = SCREEN_PX_W + 'px';
+  el.style.height = SCREEN_PX_H + 'px';
+  el.style.background = '#000';
+  const mount = document.createElement('div');
+  mount.id = 'yt-player-' + index;
+  el.appendChild(mount);
+
+  const worldScreenPos = new THREE.Vector3(0, SCREEN_Y, SCREEN_LZ)
+    .applyAxisAngle(UP, room.yaw).add(room.center);
+  const cssObj = new CSS3DObject(el);
+  cssObj.position.copy(worldScreenPos);
+  cssObj.rotation.y = room.yaw;
+  cssObj.scale.setScalar(SCREEN_W / SCREEN_PX_W);
+  cssScene.add(cssObj);
+
+  const hole = new THREE.Mesh(
+    new THREE.PlaneGeometry(SCREEN_W, SCREEN_H),
+    new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      opacity: 0,
+      transparent: true,
+      blending: THREE.NoBlending,
+      side: THREE.DoubleSide
+    })
+  );
+  hole.position.copy(worldScreenPos);
+  hole.rotation.y = room.yaw;
+  scene.add(hole);
+
+  // World-space interior box for room detection
+  const a = new THREE.Vector3(-ROOM_HW, 0, -ROOM_HD).applyAxisAngle(UP, room.yaw).add(room.center);
+  const b = new THREE.Vector3(ROOM_HW, 0, ROOM_HD).applyAxisAngle(UP, room.yaw).add(room.center);
+  roomBoxes.push(new THREE.Box3().setFromPoints([a, b]));
 }
 
-scene.add(new THREE.AmbientLight(0x4a4258, 0.9));
-const screenLight = new THREE.PointLight(0xbfd4ff, 55, 40, 1.8);
-screenLight.position.set(0, SCREEN.centerY, SCREEN.z + 4);
-scene.add(screenLight);
-const backLight = new THREE.PointLight(0xffc46b, 25, 30, 1.8);
-backLight.position.set(0, 5, 10);
-scene.add(backLight);
+ROOMS.forEach(buildRoom);
+
+// ---------------------------------------------------------------------------
+// Lobby corridor and shared shell
+// ---------------------------------------------------------------------------
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(42, 55), carpetMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.set(0, 0, 25);
+scene.add(floor);
+const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(42, 55), ceilingMat);
+ceiling.rotation.x = Math.PI / 2;
+ceiling.position.set(0, CEIL_H, 25);
+scene.add(ceiling);
+
+// Corridor wall segments where no room door adjoins, plus the two end walls
+function corridorWall(x, z1, z2) {
+  boxMesh(scene, 0.3, CEIL_H, z2 - z1, x, CEIL_H / 2, (z1 + z2) / 2, wallMat);
+  addCollider(x - 0.3, z1, x + 0.3, z2);
+}
+corridorWall(-3.5, -2, 0);
+corridorWall(-3.5, 14, 18);
+corridorWall(-3.5, 32, 36);
+corridorWall(-3.5, 50, 52);
+corridorWall(3.5, -2, 9);
+corridorWall(3.5, 23, 27);
+corridorWall(3.5, 41, 52);
+boxMesh(scene, 7.6, CEIL_H, 0.3, 0, CEIL_H / 2, -2, wallMat);
+addCollider(-3.8, -2.3, 3.8, -1.8);
+boxMesh(scene, 7.6, CEIL_H, 0.3, 0, CEIL_H / 2, 52, wallMat);
+addCollider(-3.8, 51.8, 3.8, 52.3);
+
+// Lobby dressing: welcome sign, guide lights along the corridor
+const lobbySign = makeSign('NOW SHOWING');
+lobbySign.position.set(0, 4.2, 51.8);
+lobbySign.rotation.y = Math.PI;
+scene.add(lobbySign);
+for (const z of [4, 21, 38]) {
+  boxMesh(scene, 0.15, 0.5, 0.15, -3.3, 3.2, z, trimMat);
+  boxMesh(scene, 0.15, 0.5, 0.15, 3.3, 3.2, z, trimMat);
+}
+for (const z of [2, 16, 30, 44]) {
+  const l = new THREE.PointLight(0xffc46b, 35, 18, 1.6);
+  l.position.set(0, 6.5, z);
+  scene.add(l);
+}
+scene.add(new THREE.AmbientLight(0x4a4258, 1.0));
 
 // ---------------------------------------------------------------------------
 // Movement
@@ -425,13 +580,12 @@ function tryMove(dx, dz) {
   if (colliders.some(b => circleHitsBox(pos.x, pos.z, b))) pos.x = oldX;
   pos.z += dz;
   if (colliders.some(b => circleHitsBox(pos.x, pos.z, b))) pos.z = oldZ;
-  pos.x = THREE.MathUtils.clamp(pos.x, ROOM.minX + 0.6, ROOM.maxX - 0.6);
-  pos.z = THREE.MathUtils.clamp(pos.z, ROOM.minZ + 2.2, ROOM.maxZ - 0.6);
+  pos.x = THREE.MathUtils.clamp(pos.x, WORLD.minX, WORLD.maxX);
+  pos.z = THREE.MathUtils.clamp(pos.z, WORLD.minZ, WORLD.maxZ);
 }
 
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
-const UP = new THREE.Vector3(0, 1, 0);
 
 function updateMovement(dt) {
   if (!controls.isLocked) return;
@@ -457,13 +611,20 @@ function updateMovement(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// YouTube player
+// YouTube players — one per room
 // ---------------------------------------------------------------------------
+const N = ROOMS.length;
 const statusEl = document.getElementById('status');
-const nowPlayingEl = document.getElementById('now-playing');
-let player = null;
-let playerReady = false;
-let pendingLoad = null;
+const hudLocation = document.getElementById('hud-location');
+const perfCheckbox = document.getElementById('perf-mode');
+const players = new Array(N).fill(null);
+const playerReady = new Array(N).fill(false);
+const roomLoaded = new Array(N).fill(false);
+const pendingLoads = new Array(N).fill(null);
+let apiReady = false;
+let activeRoom = -1; // -1 = lobby
+let userMuted = false;
+let userVolume = 80;
 
 function setStatus(msg) {
   statusEl.textContent = msg;
@@ -483,62 +644,79 @@ function parseInput(raw) {
   } catch { /* not a URL — fall through to raw-ID handling */ }
   if (/^(PL|UU|OL|RD|FL)[A-Za-z0-9_-]{10,}$/.test(value)) return { type: 'playlist', id: value };
   if (/^[A-Za-z0-9_-]{11}$/.test(value)) return { type: 'video', id: value };
-  return null;
+  return undefined; // present but unparseable
 }
 
-function loadContent(content) {
-  if (!playerReady) {
-    pendingLoad = content;
-    setStatus('Waiting for the YouTube player to load…');
+function updateNowPlaying(i) {
+  const li = document.getElementById('np-' + i);
+  const data = players[i] && players[i].getVideoData ? players[i].getVideoData() : null;
+  if (data && data.title) li.textContent = ROOMS[i].name + ': ' + data.title;
+}
+
+function applyAudio() {
+  players.forEach((p, i) => {
+    if (!p || !playerReady[i]) return;
+    if (i === activeRoom && !userMuted) {
+      p.unMute();
+      p.setVolume(userVolume);
+    } else {
+      p.mute();
+    }
+  });
+}
+
+function applyPerfMode() {
+  players.forEach((p, i) => {
+    if (!p || !playerReady[i] || !roomLoaded[i]) return;
+    if (!perfCheckbox.checked || i === activeRoom) p.playVideo();
+    else p.pauseVideo();
+  });
+}
+
+function loadContent(i, content) {
+  if (!playerReady[i]) {
+    pendingLoads[i] = content;
     return;
   }
-  if (content.type === 'playlist') {
-    player.loadPlaylist({ list: content.id, listType: 'playlist' });
-    setStatus('Loading playlist…');
-  } else {
-    player.loadVideoById(content.id);
-    setStatus('Loading video…');
-  }
+  if (content.type === 'playlist') players[i].loadPlaylist({ list: content.id, listType: 'playlist' });
+  else players[i].loadVideoById(content.id);
+  roomLoaded[i] = true;
+  applyAudio();
 }
 
-function updateNowPlaying() {
-  const data = player && player.getVideoData ? player.getVideoData() : null;
-  if (data && data.title) {
-    nowPlayingEl.textContent = 'Now playing: ' + data.title;
-  }
-}
-
-window.onYouTubeIframeAPIReady = () => {
+function createPlayer(i) {
   const vars = { playsinline: 1, rel: 0, enablejsapi: 1 };
   if (location.protocol.startsWith('http')) vars.origin = location.origin;
-  player = new YT.Player('yt-player', {
+  players[i] = new YT.Player('yt-player-' + i, {
     width: SCREEN_PX_W,
     height: SCREEN_PX_H,
     playerVars: vars,
     events: {
       onReady: () => {
-        playerReady = true;
-        setStatus('YouTube player ready. Load a playlist to begin.');
-        if (pendingLoad) {
-          loadContent(pendingLoad);
-          pendingLoad = null;
+        playerReady[i] = true;
+        players[i].mute(); // rooms start silent; audio follows the walker
+        if (pendingLoads[i]) {
+          loadContent(i, pendingLoads[i]);
+          pendingLoads[i] = null;
         }
       },
       onStateChange: (e) => {
         if (e.data === YT.PlayerState.PLAYING) {
-          updateNowPlaying();
-          setStatus(nowPlayingEl.textContent);
-        } else if (e.data === YT.PlayerState.PAUSED) {
-          setStatus('Paused.');
-        } else if (e.data === YT.PlayerState.ENDED) {
-          setStatus('Playlist finished.');
+          updateNowPlaying(i);
+          if (i === activeRoom) setStatus(document.getElementById('np-' + i).textContent);
         }
       },
       onError: () => {
-        setStatus('YouTube could not play that item — it may be private, deleted, or blocked for embedding. Skipping is safe (press N).');
+        setStatus(ROOMS[i].name + ": that video can't be played here — it may be private or blocked for embedding. Press N in that room to skip it.");
       }
     }
   });
+}
+
+window.onYouTubeIframeAPIReady = () => {
+  apiReady = true;
+  for (let i = 0; i < N; i++) createPlayer(i);
+  setStatus('YouTube players ready. Load your playlists to light up the screens.');
 };
 
 const apiScript = document.createElement('script');
@@ -546,38 +724,81 @@ apiScript.src = 'https://www.youtube.com/iframe_api';
 apiScript.onerror = () => setStatus('Could not load the YouTube player — check your connection or ad blocker, then reload the page.');
 document.head.appendChild(apiScript);
 setTimeout(() => {
-  if (!player) setStatus('Still waiting for YouTube to load — check your connection or ad blocker.');
+  if (!apiReady) setStatus('Still waiting for YouTube to load — check your connection or ad blocker.');
 }, 8000);
+
+// ---------------------------------------------------------------------------
+// Room tracking — audio (and optionally playback) follows the walker
+// ---------------------------------------------------------------------------
+function currentRoom() {
+  const p = camera.position;
+  for (let i = 0; i < roomBoxes.length; i++) {
+    const b = roomBoxes[i];
+    if (p.x > b.min.x && p.x < b.max.x && p.z > b.min.z && p.z < b.max.z) return i;
+  }
+  return -1;
+}
+
+function checkRoomChange() {
+  const room = currentRoom();
+  if (room === activeRoom) return;
+  activeRoom = room;
+  hudLocation.textContent = room === -1 ? 'Lobby' : ROOMS[room].name;
+  applyAudio();
+  applyPerfMode();
+  if (room === -1) {
+    setStatus('Back in the lobby.');
+  } else {
+    const np = document.getElementById('np-' + room).textContent;
+    setStatus('Entered ' + ROOMS[room].name + (roomLoaded[room] ? ' — ' + np : ' — no playlist loaded on this screen.'));
+  }
+}
 
 // ---------------------------------------------------------------------------
 // UI wiring
 // ---------------------------------------------------------------------------
 const form = document.getElementById('playlist-form');
-const input = document.getElementById('playlist-input');
-const errorEl = document.getElementById('playlist-error');
 const enterBtn = document.getElementById('enter-btn');
-
-function clearError() {
-  errorEl.textContent = '';
-  errorEl.classList.remove('visible');
-  input.removeAttribute('aria-invalid');
-}
 
 form.addEventListener('submit', (e) => {
   e.preventDefault();
-  const content = parseInput(input.value);
-  if (!content) {
-    errorEl.textContent = 'That doesn’t look like a YouTube link. Paste a playlist URL such as https://www.youtube.com/playlist?list=PL… or a video URL.';
-    errorEl.classList.add('visible');
-    input.setAttribute('aria-invalid', 'true');
-    input.focus();
-    return;
+  let loadedAny = false, hadError = false;
+  for (let i = 0; i < N; i++) {
+    const input = document.getElementById('playlist-' + i);
+    const errorEl = document.getElementById('error-' + i);
+    const content = parseInput(input.value);
+    if (content === undefined) {
+      errorEl.textContent = "This doesn't look like a YouTube link — paste a playlist URL (…?list=PL…), a video URL, or a bare ID.";
+      errorEl.classList.add('visible');
+      input.setAttribute('aria-invalid', 'true');
+      hadError = true;
+      continue;
+    }
+    errorEl.textContent = '';
+    errorEl.classList.remove('visible');
+    input.removeAttribute('aria-invalid');
+    if (content) {
+      loadContent(i, content);
+      loadedAny = true;
+    }
   }
-  clearError();
-  loadContent(content);
+  if (hadError) {
+    setStatus('Some screens were not loaded — fix the highlighted links.');
+  } else if (loadedAny) {
+    setStatus(apiReady ? 'Screens loading…' : 'Waiting for the YouTube player to load…');
+  } else {
+    setStatus('Enter at least one playlist to light up a screen.');
+  }
 });
-input.addEventListener('input', clearError);
 
+for (let i = 0; i < N; i++) {
+  document.getElementById('playlist-' + i).addEventListener('input', (e) => {
+    document.getElementById('error-' + i).classList.remove('visible');
+    e.target.removeAttribute('aria-invalid');
+  });
+}
+
+perfCheckbox.addEventListener('change', applyPerfMode);
 enterBtn.addEventListener('click', () => controls.lock());
 
 controls.addEventListener('lock', () => {
@@ -591,35 +812,46 @@ controls.addEventListener('unlock', () => {
 });
 
 // Single-key media shortcuts — only while pointer-locked (walking), so they
-// can never collide with typing in the menu.
+// can never collide with typing in the menu. They control the room you're in.
 document.addEventListener('keydown', (e) => {
   if (!controls.isLocked) {
     keys.clear();
     return;
   }
   keys.add(e.code);
-  if (!player || !playerReady) return;
+  if (e.code === 'Space') e.preventDefault();
+
+  if (e.code === 'KeyM') {
+    userMuted = !userMuted;
+    applyAudio();
+    setStatus(userMuted ? 'Muted.' : 'Sound on.');
+    return;
+  }
+  const p = activeRoom >= 0 ? players[activeRoom] : null;
+  if (!p || !playerReady[activeRoom]) {
+    if (['Space', 'KeyN', 'KeyP', 'Minus', 'Equal'].includes(e.code)) {
+      setStatus('Step into a screen room to control its playback.');
+    }
+    return;
+  }
   switch (e.code) {
     case 'Space': {
-      e.preventDefault();
-      const state = player.getPlayerState();
-      if (state === YT.PlayerState.PLAYING) player.pauseVideo();
-      else player.playVideo();
+      const state = p.getPlayerState();
+      if (state === YT.PlayerState.PLAYING) { p.pauseVideo(); setStatus('Paused.'); }
+      else p.playVideo();
       break;
     }
-    case 'KeyN': player.nextVideo(); break;
-    case 'KeyP': player.previousVideo(); break;
-    case 'KeyM':
-      if (player.isMuted()) { player.unMute(); setStatus('Sound on.'); }
-      else { player.mute(); setStatus('Muted.'); }
-      break;
+    case 'KeyN': p.nextVideo(); break;
+    case 'KeyP': p.previousVideo(); break;
     case 'Minus':
-      player.setVolume(Math.max(0, player.getVolume() - 10));
-      setStatus('Volume ' + player.getVolume() + '%');
+      userVolume = Math.max(0, userVolume - 10);
+      applyAudio();
+      setStatus('Volume ' + userVolume + '%');
       break;
     case 'Equal':
-      player.setVolume(Math.min(100, player.getVolume() + 10));
-      setStatus('Volume ' + player.getVolume() + '%');
+      userVolume = Math.min(100, userVolume + 10);
+      applyAudio();
+      setStatus('Volume ' + userVolume + '%');
       break;
   }
 });
@@ -632,6 +864,9 @@ addEventListener('resize', () => {
   cssRenderer.setSize(innerWidth, innerHeight);
 });
 
+// Dev/test hook
+window.__cinema = { camera, controls, roomBoxes };
+
 // ---------------------------------------------------------------------------
 // Render loop
 // ---------------------------------------------------------------------------
@@ -640,10 +875,13 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
   updateMovement(dt);
+  checkRoomChange();
   if (!reducedMotion) {
-    // Gentle projector-style shimmer on the screen light
+    // Gentle projector-style shimmer on the screen lights
     flickerT += dt;
-    screenLight.intensity = 55 + Math.sin(flickerT * 1.7) * 4;
+    screenLights.forEach((l, i) => {
+      l.intensity = 40 + Math.sin(flickerT * 1.7 + i * 1.3) * 3;
+    });
   }
   glRenderer.render(scene, camera);
   cssRenderer.render(cssScene, camera);
