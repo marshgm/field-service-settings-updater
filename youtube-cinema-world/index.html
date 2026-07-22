@@ -244,7 +244,7 @@
     <fieldset>
       <legend>Playlists — one per screen</legend>
       <div class="screen-field">
-        <label for="playlist-0">Screen 1</label>
+        <label for="playlist-0">Screen 2020</label>
         <input type="text" id="playlist-0" autocomplete="off" spellcheck="false"
                aria-describedby="error-0 form-hint"
                value="https://www.youtube.com/playlist?list=PLGVTrXAewf5O0lq1G9dJr_ZHG2Ql6AcBr"
@@ -252,7 +252,7 @@
         <p class="error" id="error-0"></p>
       </div>
       <div class="screen-field">
-        <label for="playlist-1">Screen 2</label>
+        <label for="playlist-1">Screen 2021</label>
         <input type="text" id="playlist-1" autocomplete="off" spellcheck="false"
                aria-describedby="error-1 form-hint"
                value="https://www.youtube.com/playlist?list=PLGVTrXAewf5NoqrVxeUqcXndp1mLnF8tM"
@@ -260,7 +260,7 @@
         <p class="error" id="error-1"></p>
       </div>
       <div class="screen-field">
-        <label for="playlist-2">Screen 3</label>
+        <label for="playlist-2">Screen 2022</label>
         <input type="text" id="playlist-2" autocomplete="off" spellcheck="false"
                aria-describedby="error-2 form-hint"
                value="https://www.youtube.com/playlist?list=PLGVTrXAewf5N4dPepIN2ay4WgYecwDwfw"
@@ -268,7 +268,7 @@
         <p class="error" id="error-2"></p>
       </div>
       <div class="screen-field">
-        <label for="playlist-3">Screen 4</label>
+        <label for="playlist-3">Screen 2023</label>
         <input type="text" id="playlist-3" autocomplete="off" spellcheck="false"
                aria-describedby="error-3 form-hint"
                value="https://www.youtube.com/playlist?list=PLGVTrXAewf5OnYe9Q01VKqy6_Fx0Q9xGf"
@@ -276,7 +276,7 @@
         <p class="error" id="error-3"></p>
       </div>
       <div class="screen-field">
-        <label for="playlist-4">Screen 5</label>
+        <label for="playlist-4">Screen 2024</label>
         <input type="text" id="playlist-4" autocomplete="off" spellcheck="false"
                aria-describedby="error-4 form-hint"
                value="https://www.youtube.com/playlist?list=PLGVTrXAewf5MMeuvthHjR1YobO7G2qlO2"
@@ -284,7 +284,7 @@
         <p class="error" id="error-4"></p>
       </div>
       <div class="screen-field">
-        <label for="playlist-5">Screen 6</label>
+        <label for="playlist-5">Screen 2026</label>
         <input type="text" id="playlist-5" autocomplete="off" spellcheck="false"
                aria-describedby="error-5 form-hint"
                value="https://www.youtube.com/playlist?list=PLGVTrXAewf5MOKJ3Q6DZ0T3hp1FQimf_p"
@@ -307,12 +307,12 @@
   <div class="now-playing">
     <h2>Now showing</h2>
     <ul id="now-list">
-      <li id="np-0">Screen 1: nothing loaded</li>
-      <li id="np-1">Screen 2: nothing loaded</li>
-      <li id="np-2">Screen 3: nothing loaded</li>
-      <li id="np-3">Screen 4: nothing loaded</li>
-      <li id="np-4">Screen 5: nothing loaded</li>
-      <li id="np-5">Screen 6: nothing loaded</li>
+      <li id="np-0">Screen 2020: nothing loaded</li>
+      <li id="np-1">Screen 2021: nothing loaded</li>
+      <li id="np-2">Screen 2022: nothing loaded</li>
+      <li id="np-3">Screen 2023: nothing loaded</li>
+      <li id="np-4">Screen 2024: nothing loaded</li>
+      <li id="np-5">Screen 2026: nothing loaded</li>
     </ul>
   </div>
 
@@ -392,12 +392,12 @@ const PLAYER_RADIUS = 0.35;
 const WORLD = { minX: -20.2, maxX: 20.2, minZ: -1.7, maxZ: 60.7 };
 
 const ROOMS = [
-  { name: 'Screen 1', center: new THREE.Vector3(-12, 0, 7),  yaw:  Math.PI / 2 },
-  { name: 'Screen 2', center: new THREE.Vector3( 12, 0, 16), yaw: -Math.PI / 2 },
-  { name: 'Screen 3', center: new THREE.Vector3(-12, 0, 25), yaw:  Math.PI / 2 },
-  { name: 'Screen 4', center: new THREE.Vector3( 12, 0, 34), yaw: -Math.PI / 2 },
-  { name: 'Screen 5', center: new THREE.Vector3(-12, 0, 43), yaw:  Math.PI / 2 },
-  { name: 'Screen 6', center: new THREE.Vector3( 12, 0, 52), yaw: -Math.PI / 2 },
+  { name: 'Screen 2020', sign: '2020', center: new THREE.Vector3(-12, 0, 7),  yaw:  Math.PI / 2 },
+  { name: 'Screen 2021', sign: '2021', center: new THREE.Vector3( 12, 0, 16), yaw: -Math.PI / 2 },
+  { name: 'Screen 2022', sign: '2022', center: new THREE.Vector3(-12, 0, 25), yaw:  Math.PI / 2 },
+  { name: 'Screen 2023', sign: '2023', center: new THREE.Vector3( 12, 0, 34), yaw: -Math.PI / 2 },
+  { name: 'Screen 2024', sign: '2024', center: new THREE.Vector3(-12, 0, 43), yaw:  Math.PI / 2 },
+  { name: 'Screen 2026', sign: '2026', center: new THREE.Vector3( 12, 0, 52), yaw: -Math.PI / 2 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -576,8 +576,8 @@ function buildRoom(room, index) {
     }
   }
 
-  // Sign above the door on the lobby side
-  const sign = makeSign(room.name.toUpperCase());
+  // Sign above the door on the lobby side — the Summit year
+  const sign = makeSign(room.sign);
   sign.position.set(0, 3.9, ROOM_HD + 0.4);
   g.add(sign);
 
