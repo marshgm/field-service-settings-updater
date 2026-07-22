@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Cinema World — a six-screen multiplex you can walk around</title>
+<style>
+  :root {
+    --bg: #0b0710;
+    --card: #17111f;
+    --card-border: #38304a;
+    --text: #f2eef7;
+    --text-dim: #c7bfd6;
+    --accent: #c62a30;
+    --accent-text: #ffffff;
+    --focus: #ffd60a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    overflow: hidden;
+  }
+
+  /* 3D layers: CSS3D (YouTube iframes) underneath, WebGL canvas on top.
+     The WebGL scene punches transparent holes where the cinema screens are,
+     so each iframe shows through in correct 3D perspective. */
+  #css3d, #webgl { position: fixed; inset: 0; }
+  #css3d { z-index: 1; }
+  #webgl { z-index: 2; touch-action: none; }
+  /* While the menu is open, let clicks pass through to the YouTube iframes so
+     users can operate YouTube's own controls (play, captions, volume). */
+  body.menu-open #webgl { pointer-events: none; }
+
+  .skip-link {
+    position: absolute;
+    left: 0.5rem; top: -3rem;
+    z-index: 20;
+    background: var(--accent); color: var(--accent-text);
+    padding: 0.5rem 1rem; border-radius: 0.25rem;
+    transition: top 0.15s;
+  }
+  .skip-link:focus { top: 0.5rem; }
+  @media (prefers-reduced-motion: reduce) {
+    .skip-link { transition: none; }
+  }
+
+  main#panel {
+    position: fixed;
+    z-index: 10;
+    top: 0; left: 0;
+    height: 100dvh;
+    width: min(26rem, 100vw);
+    overflow-y: auto;
+    padding: 1.25rem;
+    background: color-mix(in srgb, var(--card) 93%, transparent);
+    border-right: 1px solid var(--card-border);
+    backdrop-filter: blur(6px);
+  }
+  body.locked main#panel { display: none; }
+
+  h1 { font-size: 1.35rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.4rem; }
+  .tagline { margin: 0 0 1rem; color: var(--text-dim); font-size: 0.95rem; }
+
+  fieldset {
+    border: 1px solid var(--card-border);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    margin: 0 0 0.75rem;
+  }
+  legend { font-weight: 700; padding: 0 0.35rem; }
+  .screen-field { margin-bottom: 0.7rem; }
+  .screen-field:last-child { margin-bottom: 0; }
+  label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+  .hint { font-size: 0.85rem; color: var(--text-dim); margin: 0.3rem 0 0; }
+  input[type="text"] {
+    width: 100%;
+    font: inherit;
+    color: var(--text);
+    background: #0e0a15;
+    border: 1px solid #7a7194;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.65rem;
+  }
+  input[type="text"]::placeholder { color: #9d94b3; }
+
+  .error {
+    display: none;
+    margin: 0.3rem 0 0;
+    color: #ffb3b5;
+    font-size: 0.88rem;
+  }
+  .error.visible { display: block; }
+  input[aria-invalid="true"] { border-color: #ff8589; }
+
+  .checkbox-row { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.75rem 0 0; }
+  .checkbox-row input { width: 1.15rem; height: 1.15rem; margin-top: 0.2rem; flex: none; accent-color: var(--accent); }
+  .checkbox-row label { font-weight: 400; margin: 0; font-size: 0.92rem; }
+
+  .btn {
+    font: inherit;
+    font-weight: 600;
+    border: 1px solid transparent;
+    border-radius: 0.375rem;
+    padding: 0.55rem 1rem;
+    min-height: 2.75rem;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--accent); color: var(--accent-text); width: 100%; margin-top: 0.25rem; }
+  .btn-secondary { background: transparent; color: var(--text); border-color: #7a7194; width: 100%; margin-top: 0.5rem; }
+
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  details { margin-top: 1rem; border-top: 1px solid var(--card-border); padding-top: 0.75rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  details ul { padding-left: 1.2rem; margin: 0.5rem 0 0; }
+  details li { margin-bottom: 0.25rem; font-size: 0.92rem; }
+  kbd {
+    background: #2a2138; border: 1px solid #5a5170; border-bottom-width: 2px;
+    border-radius: 0.25rem; padding: 0 0.35rem; font-size: 0.85em;
+  }
+
+  .now-playing {
+    margin-top: 1rem;
+    padding: 0.6rem 0.75rem;
+    background: #221a2e;
+    border: 1px solid var(--card-border);
+    border-radius: 0.375rem;
+    font-size: 0.92rem;
+  }
+  .now-playing ul { list-style: none; padding: 0; margin: 0; }
+  .now-playing li { margin-bottom: 0.3rem; }
+  .now-playing li:last-child { margin-bottom: 0; }
+
+  /* Heads-up display while walking (decorative for AT; real controls live in the panel) */
+  #hud { position: fixed; inset: 0; z-index: 5; pointer-events: none; display: none; }
+  body.locked #hud { display: block; }
+  #crosshair {
+    position: absolute; top: 50%; left: 50%;
+    width: 6px; height: 6px; margin: -3px 0 0 -3px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.85);
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  }
+  #hud .keys {
+    position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%);
+    background: rgba(10, 6, 16, 0.8);
+    color: var(--text);
+    padding: 0.4rem 0.9rem;
+    border-radius: 2rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    max-width: calc(100vw - 2rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #hud .location {
+    position: absolute; top: 1rem; left: 50%; transform: translateX(-50%);
+    background: rgba(10, 6, 16, 0.8);
+    color: var(--text);
+    padding: 0.35rem 0.9rem;
+    border-radius: 2rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  /* Touch controls — shown only while walking on a touch device */
+  .touch-ui { display: none; }
+  body.touch-device.locked .touch-ui { display: block; }
+  body.touch-device #hud .keys { display: none; }
+  .hud-btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    padding: 0.4rem 0.7rem;
+    font: inherit;
+    font-size: 1.15rem;
+    color: var(--text);
+    background: rgba(10, 6, 16, 0.85);
+    border: 1px solid #7a7194;
+    border-radius: 0.5rem;
+    cursor: pointer;
+  }
+  #menu-btn { position: fixed; top: 1rem; right: 1rem; z-index: 6; font-size: 1rem; font-weight: 600; }
+  .media-btns {
+    position: fixed;
+    bottom: 1.25rem; right: 1rem;
+    z-index: 6;
+    display: flex;
+    gap: 0.6rem;
+  }
+  #joystick {
+    position: fixed;
+    bottom: 1.5rem; left: 1.25rem;
+    z-index: 6;
+    width: 8rem; height: 8rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    touch-action: none;
+  }
+  #joy-knob {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 3.5rem; height: 3.5rem;
+    margin: -1.75rem 0 0 -1.75rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+  }
+
+  #status {
+    position: fixed;
+    z-index: 15;
+    bottom: 1rem; right: 1rem;
+    max-width: min(24rem, calc(100vw - 2rem));
+    background: rgba(10, 6, 16, 0.9);
+    border: 1px solid var(--card-border);
+    color: var(--text);
+    padding: 0.5rem 0.85rem;
+    border-radius: 0.375rem;
+    font-size: 0.92rem;
+  }
+  #status:empty { display: none; }
+  /* keep the status toast clear of the touch media buttons */
+  body.touch-device.locked #status { bottom: 5.5rem; }
+</style>
+</head>
+<body class="menu-open">
+
+<a class="skip-link" href="#playlist-0">Skip to playlist controls</a>
+
+<main id="panel" aria-label="Multiplex controls">
+  <h1>YouTube Cinema World</h1>
+  <p class="tagline">A six-screen multiplex. Give each screen its own YouTube playlist, then walk the lobby and wander into whichever room takes your fancy — you hear the screen of the room you're in.</p>
+
+  <form id="playlist-form" novalidate>
+    <fieldset>
+      <legend>Playlists — one per screen</legend>
+      <div class="screen-field">
+        <label for="playlist-0">Screen 2020</label>
+        <input type="text" id="playlist-0" autocomplete="off" spellcheck="false"
+               aria-describedby="error-0 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5O0lq1G9dJr_ZHG2Ql6AcBr"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-0"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-1">Screen 2021</label>
+        <input type="text" id="playlist-1" autocomplete="off" spellcheck="false"
+               aria-describedby="error-1 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5NoqrVxeUqcXndp1mLnF8tM"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-1"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-2">Screen 2022</label>
+        <input type="text" id="playlist-2" autocomplete="off" spellcheck="false"
+               aria-describedby="error-2 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5N4dPepIN2ay4WgYecwDwfw"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-2"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-3">Screen 2023</label>
+        <input type="text" id="playlist-3" autocomplete="off" spellcheck="false"
+               aria-describedby="error-3 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5OnYe9Q01VKqy6_Fx0Q9xGf"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-3"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-4">Screen 2024</label>
+        <input type="text" id="playlist-4" autocomplete="off" spellcheck="false"
+               aria-describedby="error-4 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5MMeuvthHjR1YobO7G2qlO2"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-4"></p>
+      </div>
+      <div class="screen-field">
+        <label for="playlist-5">Screen 2026</label>
+        <input type="text" id="playlist-5" autocomplete="off" spellcheck="false"
+               aria-describedby="error-5 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5MOKJ3Q6DZ0T3hp1FQimf_p"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
+        <p class="error" id="error-5"></p>
+      </div>
+      <p class="hint" id="form-hint">Paste a playlist URL, a video URL, a channel URL (plays that channel's uploads), or a bare playlist ID. Google redirect links are unwrapped automatically. Leave a screen blank to keep that room dark. The screens come preloaded with the Scottish Summit yearly playlists — 2020, 2021, 2022, 2023, 2024 and 2026 — swap in your own any time.</p>
+    </fieldset>
+    <button type="submit" class="btn btn-primary" id="load-btn">Load the screens</button>
+  </form>
+
+  <div class="checkbox-row">
+    <input type="checkbox" id="perf-mode">
+    <label for="perf-mode">Performance mode — pause the screens in rooms I'm not in (kinder to slower machines)</label>
+  </div>
+
+  <button type="button" class="btn btn-secondary" id="enter-btn">Enter the multiplex (mouse look + WASD)</button>
+  <p class="hint">While this menu is open you can also click any on-screen player directly to use YouTube's own play, captions and volume controls.</p>
+
+  <div class="now-playing">
+    <h2>Now showing</h2>
+    <ul id="now-list">
+      <li id="np-0">Screen 2020: nothing loaded</li>
+      <li id="np-1">Screen 2021: nothing loaded</li>
+      <li id="np-2">Screen 2022: nothing loaded</li>
+      <li id="np-3">Screen 2023: nothing loaded</li>
+      <li id="np-4">Screen 2024: nothing loaded</li>
+      <li id="np-5">Screen 2026: nothing loaded</li>
+    </ul>
+  </div>
+
+  <details>
+    <summary>Controls</summary>
+    <ul>
+      <li><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrow keys — walk</li>
+      <li><kbd>Shift</kbd> — walk faster</li>
+      <li>Mouse — look around</li>
+      <li><kbd>Space</kbd> — play / pause the room you're in</li>
+      <li><kbd>N</kbd> / <kbd>P</kbd> — next / previous video in this room</li>
+      <li><kbd>M</kbd> — mute / unmute</li>
+      <li><kbd>-</kbd> / <kbd>=</kbd> — volume down / up</li>
+      <li><kbd>Esc</kbd> — leave the walk and reopen this menu</li>
+      <li>Touch screens — left joystick to walk, drag anywhere else to look, on-screen buttons for playback, <strong>Menu</strong> to come back here</li>
+    </ul>
+    <p class="hint">Single-key shortcuts are only active while you are walking (pointer locked); they are disabled when this menu is open. Audio follows you: only the room you're standing in is unmuted.</p>
+    <p class="hint">Captions: open this menu with <kbd>Esc</kbd>, then click the CC button on that room's player.</p>
+  </details>
+</main>
+
+<div id="css3d"></div>
+
+<div id="hud" aria-hidden="true">
+  <div id="crosshair"></div>
+  <div class="location" id="hud-location">Lobby</div>
+  <div class="keys">Esc menu · Space play/pause · N/P next/prev · M mute</div>
+</div>
+
+<div class="touch-ui">
+  <button type="button" id="menu-btn" class="hud-btn">Menu</button>
+  <div id="joystick" aria-hidden="true"><div id="joy-knob"></div></div>
+  <div class="media-btns">
+    <button type="button" id="tp-prev" class="hud-btn" aria-label="Previous video">⏮</button>
+    <button type="button" id="tp-play" class="hud-btn" aria-label="Play or pause">⏯</button>
+    <button type="button" id="tp-next" class="hud-btn" aria-label="Next video">⏭</button>
+    <button type="button" id="tp-mute" class="hud-btn" aria-label="Mute or unmute" aria-pressed="false">🔊</button>
+  </div>
+</div>
+
+<div id="status" role="status" aria-live="polite"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+if (isTouch) document.body.classList.add('touch-device');
+const UP = new THREE.Vector3(0, 1, 0);
+
+// ---------------------------------------------------------------------------
+// Multiplex layout (metres).
+// A central lobby corridor runs along z; five rooms branch off it, three on
+// the west side and two on the east. Each room is built in a local frame
+// (screen at local -z, door centred in the local +z wall) and then rotated
+// into place, so one builder serves every room.
+// ---------------------------------------------------------------------------
+const ROOM_HW = 7;      // local half-width  (x)
+const ROOM_HD = 8.5;    // local half-depth  (z)
+const CEIL_H = 8.5;
+const DOOR_HW = 1.3;    // door half-width
+const DOOR_H = 3.2;
+const SCREEN_W = 11, SCREEN_H = 6.19, SCREEN_Y = 4.0, SCREEN_LZ = -8.2;
+const EYE_HEIGHT = 1.7;
+const PLAYER_RADIUS = 0.35;
+const WORLD = { minX: -20.2, maxX: 20.2, minZ: -1.7, maxZ: 60.7 };
+
+const ROOMS = [
+  { name: 'Screen 2020', sign: '2020', center: new THREE.Vector3(-12, 0, 7),  yaw:  Math.PI / 2 },
+  { name: 'Screen 2021', sign: '2021', center: new THREE.Vector3( 12, 0, 16), yaw: -Math.PI / 2 },
+  { name: 'Screen 2022', sign: '2022', center: new THREE.Vector3(-12, 0, 25), yaw:  Math.PI / 2 },
+  { name: 'Screen 2023', sign: '2023', center: new THREE.Vector3( 12, 0, 34), yaw: -Math.PI / 2 },
+  { name: 'Screen 2024', sign: '2024', center: new THREE.Vector3(-12, 0, 43), yaw:  Math.PI / 2 },
+  { name: 'Screen 2026', sign: '2026', center: new THREE.Vector3( 12, 0, 52), yaw: -Math.PI / 2 },
+];
+
+// ---------------------------------------------------------------------------
+// Renderers and scenes
+// ---------------------------------------------------------------------------
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 150);
+camera.position.set(0, EYE_HEIGHT, 59.5);
+
+const glRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+glRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+glRenderer.setSize(innerWidth, innerHeight);
+glRenderer.setClearColor(0x000000, 0);
+glRenderer.domElement.id = 'webgl';
+// The canvas is a visual rendering of the world; every function it offers is
+// also available from the menu, so hide it from assistive tech.
+glRenderer.domElement.setAttribute('aria-hidden', 'true');
+document.body.appendChild(glRenderer.domElement);
+
+const cssScene = new THREE.Scene();
+const cssRenderer = new CSS3DRenderer();
+cssRenderer.setSize(innerWidth, innerHeight);
+document.getElementById('css3d').appendChild(cssRenderer.domElement);
+
+// ---------------------------------------------------------------------------
+// Materials
+// ---------------------------------------------------------------------------
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x241a26, roughness: 0.95 });
+const carpetMat = new THREE.MeshStandardMaterial({ color: 0x461219, roughness: 1 });
+const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x120c14, roughness: 1 });
+const curtainMat = new THREE.MeshStandardMaterial({ color: 0x5e1220, roughness: 0.9 });
+// Seat upholstery: a navy/purple tartan with white pinstripes, drawn
+// procedurally so the app stays dependency-free. Two passes at right angles
+// (the second at half opacity) fake the over-under weave of the cloth.
+function makeTartanTexture() {
+  const S = 128, P = 64; // two setts per tile
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const navy = '#2c296e', purple = '#a763a7', white = '#e8e6f2';
+  function pass(vertical) {
+    const band = (x, w, color) => {
+      g.fillStyle = color;
+      for (const off of [0, P]) {
+        if (vertical) g.fillRect(x + off, 0, w, S);
+        else g.fillRect(0, x + off, S, w);
+      }
+    };
+    band(0, P, navy);
+    band(4, 26, purple);
+    band(40, 2, white);
+    band(48, 2, white);
+  }
+  pass(true);
+  g.globalAlpha = 0.5;
+  pass(false);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = glRenderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+const seatMat = new THREE.MeshStandardMaterial({ map: makeTartanTexture(), roughness: 0.9 });
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x060406 });
+const trimMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+const seatGeo = new THREE.BoxGeometry(0.85, 0.55, 0.8);
+const backGeo = new THREE.BoxGeometry(0.85, 0.75, 0.16);
+const bodyGeo = new THREE.BoxGeometry(0.5, 0.62, 0.4);
+const headGeo = new THREE.SphereGeometry(0.16, 12, 10);
+const audienceColors = [0x2c3550, 0x33502c, 0x50462c, 0x3d2c50, 0x4a3038];
+
+const colliders = [];
+
+function boxMesh(parent, w, h, d, x, y, z, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  parent.add(m);
+  return m;
+}
+
+// Transform a local ground-plane rectangle into a world-space collider box.
+// Yaws are multiples of 90 degrees, so the result stays axis-aligned.
+function addCollider(minX, minZ, maxX, maxZ, yaw = 0, center = null) {
+  const a = new THREE.Vector3(minX, 0, minZ);
+  const b = new THREE.Vector3(maxX, 0, maxZ);
+  if (yaw) { a.applyAxisAngle(UP, yaw); b.applyAxisAngle(UP, yaw); }
+  if (center) { a.add(center); b.add(center); }
+  colliders.push(new THREE.Box3().setFromPoints([a, b]));
+}
+
+function makeSign(text) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1c0510';
+  g.fillRect(0, 0, 512, 128);
+  g.strokeStyle = '#ffc46b';
+  g.lineWidth = 6;
+  g.strokeRect(8, 8, 496, 112);
+  g.fillStyle = '#ffd9a0';
+  g.font = 'bold 64px system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, 256, 68);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(
+    new THREE.PlaneGeometry(2.8, 0.7),
+    new THREE.MeshBasicMaterial({ map: tex })
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Room builder — geometry, colliders, screen hole + CSS3D player surface
+// ---------------------------------------------------------------------------
+const SCREEN_PX_W = 960, SCREEN_PX_H = 540;
+const screenLights = [];
+const roomBoxes = []; // world-space interior boxes for "which room am I in"
+
+function buildRoom(room, index) {
+  const g = new THREE.Group();
+  g.position.copy(room.center);
+  g.rotation.y = room.yaw;
+  scene.add(g);
+
+  // Walls: screen wall, two side walls, door wall in two segments + lintel
+  boxMesh(g, ROOM_HW * 2, CEIL_H, 0.3, 0, CEIL_H / 2, -ROOM_HD - 0.15, wallMat);
+  boxMesh(g, 0.3, CEIL_H, ROOM_HD * 2, -ROOM_HW - 0.15, CEIL_H / 2, 0, wallMat);
+  boxMesh(g, 0.3, CEIL_H, ROOM_HD * 2, ROOM_HW + 0.15, CEIL_H / 2, 0, wallMat);
+  const segW = ROOM_HW - DOOR_HW;
+  boxMesh(g, segW, CEIL_H, 0.3, -(DOOR_HW + segW / 2), CEIL_H / 2, ROOM_HD + 0.15, wallMat);
+  boxMesh(g, segW, CEIL_H, 0.3, DOOR_HW + segW / 2, CEIL_H / 2, ROOM_HD + 0.15, wallMat);
+  boxMesh(g, DOOR_HW * 2, CEIL_H - DOOR_H, 0.3, 0, DOOR_H + (CEIL_H - DOOR_H) / 2, ROOM_HD + 0.15, wallMat);
+
+  addCollider(-ROOM_HW, -ROOM_HD - 0.4, ROOM_HW, -ROOM_HD, room.yaw, room.center);
+  addCollider(-ROOM_HW - 0.4, -ROOM_HD, -ROOM_HW, ROOM_HD, room.yaw, room.center);
+  addCollider(ROOM_HW, -ROOM_HD, ROOM_HW + 0.4, ROOM_HD, room.yaw, room.center);
+  addCollider(-ROOM_HW, ROOM_HD, -DOOR_HW, ROOM_HD + 0.4, room.yaw, room.center);
+  addCollider(DOOR_HW, ROOM_HD, ROOM_HW, ROOM_HD + 0.4, room.yaw, room.center);
+
+  // Screen frame and curtains
+  boxMesh(g, SCREEN_W + 1, SCREEN_H + 1, 0.1, 0, SCREEN_Y, SCREEN_LZ - 0.08, frameMat);
+  boxMesh(g, 1.4, CEIL_H - 0.5, 0.7, -ROOM_HW + 0.9, (CEIL_H - 0.5) / 2, SCREEN_LZ + 0.5, curtainMat);
+  boxMesh(g, 1.4, CEIL_H - 0.5, 0.7, ROOM_HW - 0.9, (CEIL_H - 0.5) / 2, SCREEN_LZ + 0.5, curtainMat);
+
+  // Aisle strips leading from the door to the screen
+  boxMesh(g, 0.08, 0.02, ROOM_HD * 2 - 3, -1.25, 0.02, 1, trimMat);
+  boxMesh(g, 0.08, 0.02, ROOM_HD * 2 - 3, 1.25, 0.02, 1, trimMat);
+
+  // Seats in two blocks either side of the centre aisle, plus an audience
+  for (let row = 0; row < 5; row++) {
+    const rowZ = -2.5 + row * 1.9;
+    for (const side of [-1, 1]) {
+      for (let s = 0; s < 5; s++) {
+        const x = side * (1.6 + s * 0.95);
+        const seat = new THREE.Mesh(seatGeo, seatMat);
+        seat.position.set(x, 0.28, rowZ);
+        g.add(seat);
+        const back = new THREE.Mesh(backGeo, seatMat);
+        back.position.set(x, 0.9, rowZ + 0.32);
+        g.add(back);
+        if (Math.random() < 0.16) {
+          const mat = new THREE.MeshStandardMaterial({
+            color: audienceColors[Math.floor(Math.random() * audienceColors.length)],
+            roughness: 1
+          });
+          const body = new THREE.Mesh(bodyGeo, mat);
+          body.position.set(x, 0.87, rowZ);
+          g.add(body);
+          const head = new THREE.Mesh(headGeo, new THREE.MeshStandardMaterial({ color: 0x8a6f5c, roughness: 1 }));
+          head.position.set(x, 1.34, rowZ);
+          g.add(head);
+        }
+      }
+      addCollider(side === -1 ? -6.5 : 1.2, rowZ - 0.55, side === -1 ? -1.2 : 6.5, rowZ + 0.55, room.yaw, room.center);
+    }
+  }
+
+  // Sign above the door on the lobby side — the Summit year
+  const sign = makeSign(room.sign);
+  sign.position.set(0, 3.9, ROOM_HD + 0.4);
+  g.add(sign);
+
+  // Screen light (the "projector glow")
+  const light = new THREE.PointLight(0xbfd4ff, 40, 20, 1.8);
+  light.position.set(0, SCREEN_Y, SCREEN_LZ + 4).applyAxisAngle(UP, room.yaw).add(room.center);
+  scene.add(light);
+  screenLights.push(light);
+
+  // The YouTube surface: CSS3D element + transparent hole in the WebGL canvas.
+  // The hole material writes premultiplied-valid (0,0,0,0) so the iframe
+  // underneath shows through.
+  const el = document.createElement('div');
+  el.className = 'screen-surface';
+  el.style.width = SCREEN_PX_W + 'px';
+  el.style.height = SCREEN_PX_H + 'px';
+  el.style.background = '#000';
+  const mount = document.createElement('div');
+  mount.id = 'yt-player-' + index;
+  el.appendChild(mount);
+
+  const worldScreenPos = new THREE.Vector3(0, SCREEN_Y, SCREEN_LZ)
+    .applyAxisAngle(UP, room.yaw).add(room.center);
+  const cssObj = new CSS3DObject(el);
+  cssObj.position.copy(worldScreenPos);
+  cssObj.rotation.y = room.yaw;
+  cssObj.scale.setScalar(SCREEN_W / SCREEN_PX_W);
+  cssScene.add(cssObj);
+
+  const hole = new THREE.Mesh(
+    new THREE.PlaneGeometry(SCREEN_W, SCREEN_H),
+    new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      opacity: 0,
+      transparent: true,
+      blending: THREE.NoBlending,
+      side: THREE.DoubleSide
+    })
+  );
+  hole.position.copy(worldScreenPos);
+  hole.rotation.y = room.yaw;
+  scene.add(hole);
+
+  // World-space interior box for room detection
+  const a = new THREE.Vector3(-ROOM_HW, 0, -ROOM_HD).applyAxisAngle(UP, room.yaw).add(room.center);
+  const b = new THREE.Vector3(ROOM_HW, 0, ROOM_HD).applyAxisAngle(UP, room.yaw).add(room.center);
+  roomBoxes.push(new THREE.Box3().setFromPoints([a, b]));
+}
+
+ROOMS.forEach(buildRoom);
+
+// ---------------------------------------------------------------------------
+// Lobby corridor and shared shell
+// ---------------------------------------------------------------------------
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(42, 65), carpetMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.set(0, 0, 29.5);
+scene.add(floor);
+const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(42, 65), ceilingMat);
+ceiling.rotation.x = Math.PI / 2;
+ceiling.position.set(0, CEIL_H, 29.5);
+scene.add(ceiling);
+
+// Corridor wall segments where no room door adjoins, plus the two end walls
+function corridorWall(x, z1, z2) {
+  boxMesh(scene, 0.3, CEIL_H, z2 - z1, x, CEIL_H / 2, (z1 + z2) / 2, wallMat);
+  addCollider(x - 0.3, z1, x + 0.3, z2);
+}
+corridorWall(-3.5, -2, 0);
+corridorWall(-3.5, 14, 18);
+corridorWall(-3.5, 32, 36);
+corridorWall(-3.5, 50, 61);
+corridorWall(3.5, -2, 9);
+corridorWall(3.5, 23, 27);
+corridorWall(3.5, 41, 45);
+corridorWall(3.5, 59, 61);
+boxMesh(scene, 7.6, CEIL_H, 0.3, 0, CEIL_H / 2, -2, wallMat);
+addCollider(-3.8, -2.3, 3.8, -1.8);
+boxMesh(scene, 7.6, CEIL_H, 0.3, 0, CEIL_H / 2, 61, wallMat);
+addCollider(-3.8, 60.8, 3.8, 61.3);
+
+// Lobby dressing: welcome sign, guide lights along the corridor
+const lobbySign = makeSign('NOW SHOWING');
+lobbySign.position.set(0, 4.2, 60.8);
+lobbySign.rotation.y = Math.PI;
+scene.add(lobbySign);
+for (const z of [4, 21, 38, 55]) {
+  boxMesh(scene, 0.15, 0.5, 0.15, -3.3, 3.2, z, trimMat);
+  boxMesh(scene, 0.15, 0.5, 0.15, 3.3, 3.2, z, trimMat);
+}
+for (const z of [2, 16, 30, 44, 58]) {
+  const l = new THREE.PointLight(0xffc46b, 35, 18, 1.6);
+  l.position.set(0, 6.5, z);
+  scene.add(l);
+}
+scene.add(new THREE.AmbientLight(0x4a4258, 1.0));
+
+// ---------------------------------------------------------------------------
+// Movement
+// ---------------------------------------------------------------------------
+const controls = new PointerLockControls(camera, glRenderer.domElement);
+const keys = new Set();
+const clock = new THREE.Clock();
+let walking = false; // desktop: mirrors pointer lock; touch: toggled by the UI
+
+// Touch look: drag on the canvas rotates the camera (same YXZ euler scheme
+// PointerLockControls uses)
+const lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+function applyLook(dx, dy) {
+  lookEuler.setFromQuaternion(camera.quaternion);
+  lookEuler.y -= dx * 0.0045;
+  lookEuler.x = THREE.MathUtils.clamp(lookEuler.x - dy * 0.0045, -1.45, 1.45);
+  camera.quaternion.setFromEuler(lookEuler);
+}
+let lookTouchId = null, lookX = 0, lookY = 0;
+glRenderer.domElement.addEventListener('touchstart', (e) => {
+  if (!walking || lookTouchId !== null) return;
+  const t = e.changedTouches[0];
+  lookTouchId = t.identifier;
+  lookX = t.clientX;
+  lookY = t.clientY;
+}, { passive: true });
+glRenderer.domElement.addEventListener('touchmove', (e) => {
+  if (lookTouchId === null) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier !== lookTouchId) continue;
+    applyLook(t.clientX - lookX, t.clientY - lookY);
+    lookX = t.clientX;
+    lookY = t.clientY;
+    e.preventDefault();
+  }
+}, { passive: false });
+for (const ev of ['touchend', 'touchcancel']) {
+  glRenderer.domElement.addEventListener(ev, (e) => {
+    for (const t of e.changedTouches) if (t.identifier === lookTouchId) lookTouchId = null;
+  });
+}
+
+// Virtual joystick: analog walk vector
+let joyX = 0, joyY = 0, joyTouchId = null;
+const joystick = document.getElementById('joystick');
+const joyKnob = document.getElementById('joy-knob');
+function setJoy(t) {
+  const r = joystick.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const max = r.width / 2;
+  let dx = (t.clientX - cx) / max, dy = (t.clientY - cy) / max;
+  const len = Math.hypot(dx, dy);
+  if (len > 1) { dx /= len; dy /= len; }
+  joyX = dx;
+  joyY = dy;
+  joyKnob.style.transform = `translate(${dx * max * 0.6}px, ${dy * max * 0.6}px)`;
+}
+joystick.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (joyTouchId === null) {
+    joyTouchId = e.changedTouches[0].identifier;
+    setJoy(e.changedTouches[0]);
+  }
+}, { passive: false });
+joystick.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) if (t.identifier === joyTouchId) setJoy(t);
+}, { passive: false });
+for (const ev of ['touchend', 'touchcancel']) {
+  joystick.addEventListener(ev, (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== joyTouchId) continue;
+      joyTouchId = null;
+      joyX = 0;
+      joyY = 0;
+      joyKnob.style.transform = '';
+    }
+  });
+}
+
+function circleHitsBox(px, pz, box) {
+  return px > box.min.x - PLAYER_RADIUS && px < box.max.x + PLAYER_RADIUS &&
+         pz > box.min.z - PLAYER_RADIUS && pz < box.max.z + PLAYER_RADIUS;
+}
+
+function tryMove(dx, dz) {
+  const pos = camera.position;
+  const oldX = pos.x, oldZ = pos.z;
+  pos.x += dx;
+  if (colliders.some(b => circleHitsBox(pos.x, pos.z, b))) pos.x = oldX;
+  pos.z += dz;
+  if (colliders.some(b => circleHitsBox(pos.x, pos.z, b))) pos.z = oldZ;
+  pos.x = THREE.MathUtils.clamp(pos.x, WORLD.minX, WORLD.maxX);
+  pos.z = THREE.MathUtils.clamp(pos.z, WORLD.minZ, WORLD.maxZ);
+}
+
+const forward = new THREE.Vector3();
+const right = new THREE.Vector3();
+
+function updateMovement(dt) {
+  if (!walking) return;
+  let fwd = -joyY, strafe = joyX;
+  if (keys.has('KeyW') || keys.has('ArrowUp')) fwd += 1;
+  if (keys.has('KeyS') || keys.has('ArrowDown')) fwd -= 1;
+  if (keys.has('KeyD') || keys.has('ArrowRight')) strafe += 1;
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) strafe -= 1;
+
+  const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight')) ? 7 : 4;
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  forward.normalize();
+  right.crossVectors(forward, UP);
+
+  const move = new THREE.Vector3()
+    .addScaledVector(forward, fwd)
+    .addScaledVector(right, strafe);
+  const len = move.length();
+  if (len < 0.05) return;
+  if (len > 1) move.divideScalar(len); // analog joystick keeps partial speed
+  move.multiplyScalar(speed * dt);
+  tryMove(move.x, move.z);
+}
+
+// ---------------------------------------------------------------------------
+// YouTube players — one per room
+// ---------------------------------------------------------------------------
+const N = ROOMS.length;
+const statusEl = document.getElementById('status');
+const hudLocation = document.getElementById('hud-location');
+const perfCheckbox = document.getElementById('perf-mode');
+const players = new Array(N).fill(null);
+const playerReady = new Array(N).fill(false);
+const roomLoaded = new Array(N).fill(false);
+const pendingLoads = new Array(N).fill(null);
+let apiReady = false;
+let activeRoom = -1; // -1 = lobby
+let userMuted = false;
+let userVolume = 80;
+
+function setStatus(msg) {
+  statusEl.textContent = msg;
+}
+
+function parseInput(raw) {
+  let value = raw.trim();
+  if (!value) return null;
+  // Unwrap Google search redirect links (google.com/url?...&url=<real link>)
+  try {
+    const u = new URL(value.includes('://') ? value : 'https://' + value);
+    if (u.hostname.endsWith('google.com') && u.pathname === '/url') {
+      const target = u.searchParams.get('url') || u.searchParams.get('q');
+      if (target) value = target;
+    }
+  } catch { /* not a URL */ }
+  try {
+    const url = new URL(value.includes('://') ? value : 'https://' + value);
+    const list = url.searchParams.get('list');
+    if (list) return { type: 'playlist', id: list };
+    const v = url.searchParams.get('v');
+    if (v) return { type: 'video', id: v };
+    if (url.hostname.includes('youtu')) {
+      // Channel link with a real channel ID: play its uploads playlist (UU…)
+      const chan = url.pathname.match(/^\/channel\/(UC[A-Za-z0-9_-]{10,})/);
+      if (chan) return { type: 'playlist', id: 'UU' + chan[1].slice(2) };
+      // Handle / custom / legacy channel URLs: best-effort channel uploads
+      const handle = url.pathname.match(/^\/(?:@|c\/|user\/)([A-Za-z0-9._-]+)/);
+      if (handle) return { type: 'uploads', id: handle[1] };
+      const short = url.pathname.match(/^\/(?:shorts\/|embed\/)?([A-Za-z0-9_-]{11})$/);
+      if (short) return { type: 'video', id: short[1] };
+    }
+  } catch { /* not a URL — fall through to raw-ID handling */ }
+  if (/^UC[A-Za-z0-9_-]{10,}$/.test(value)) return { type: 'playlist', id: 'UU' + value.slice(2) };
+  if (/^(PL|UU|OL|RD|FL)[A-Za-z0-9_-]{10,}$/.test(value)) return { type: 'playlist', id: value };
+  if (/^[A-Za-z0-9_-]{11}$/.test(value)) return { type: 'video', id: value };
+  if (/^@[A-Za-z0-9._-]+$/.test(value)) return { type: 'uploads', id: value.slice(1) };
+  return undefined; // present but unparseable
+}
+
+function updateNowPlaying(i) {
+  const li = document.getElementById('np-' + i);
+  const data = players[i] && players[i].getVideoData ? players[i].getVideoData() : null;
+  if (data && data.title) li.textContent = ROOMS[i].name + ': ' + data.title;
+}
+
+function applyAudio() {
+  players.forEach((p, i) => {
+    if (!p || !playerReady[i]) return;
+    if (i === activeRoom && !userMuted) {
+      p.unMute();
+      p.setVolume(userVolume);
+    } else {
+      p.mute();
+    }
+  });
+}
+
+function applyPerfMode() {
+  players.forEach((p, i) => {
+    if (!p || !playerReady[i] || !roomLoaded[i]) return;
+    if (!perfCheckbox.checked || i === activeRoom) p.playVideo();
+    else p.pauseVideo();
+  });
+}
+
+function loadContent(i, content) {
+  if (!playerReady[i]) {
+    pendingLoads[i] = content;
+    return;
+  }
+  if (content.type === 'playlist') players[i].loadPlaylist({ list: content.id, listType: 'playlist' });
+  else if (content.type === 'uploads') players[i].loadPlaylist({ list: content.id, listType: 'user_uploads' });
+  else players[i].loadVideoById(content.id);
+  roomLoaded[i] = true;
+  applyAudio();
+}
+
+function createPlayer(i) {
+  const vars = { playsinline: 1, rel: 0, enablejsapi: 1 };
+  if (location.protocol.startsWith('http')) vars.origin = location.origin;
+  players[i] = new YT.Player('yt-player-' + i, {
+    width: SCREEN_PX_W,
+    height: SCREEN_PX_H,
+    playerVars: vars,
+    events: {
+      onReady: () => {
+        playerReady[i] = true;
+        players[i].mute(); // rooms start silent; audio follows the walker
+        // Distinguish the six otherwise identically-titled YouTube iframes
+        const frame = players[i].getIframe();
+        if (frame) frame.title = ROOMS[i].name + ' — YouTube player';
+        if (pendingLoads[i]) {
+          loadContent(i, pendingLoads[i]);
+          pendingLoads[i] = null;
+        }
+      },
+      onStateChange: (e) => {
+        if (e.data === YT.PlayerState.PLAYING) {
+          updateNowPlaying(i);
+          if (i === activeRoom) setStatus(document.getElementById('np-' + i).textContent);
+        }
+      },
+      onError: () => {
+        setStatus(ROOMS[i].name + ": that video can't be played here — it may be private or blocked for embedding. Press N in that room to skip it.");
+      }
+    }
+  });
+}
+
+window.onYouTubeIframeAPIReady = () => {
+  apiReady = true;
+  for (let i = 0; i < N; i++) createPlayer(i);
+  setStatus('YouTube players ready. Load your playlists to light up the screens.');
+};
+
+const apiScript = document.createElement('script');
+apiScript.src = 'https://www.youtube.com/iframe_api';
+apiScript.onerror = () => setStatus('Could not load the YouTube player — check your connection or ad blocker, then reload the page.');
+document.head.appendChild(apiScript);
+setTimeout(() => {
+  if (!apiReady) setStatus('Still waiting for YouTube to load — check your connection or ad blocker.');
+}, 8000);
+
+// ---------------------------------------------------------------------------
+// Room tracking — audio (and optionally playback) follows the walker
+// ---------------------------------------------------------------------------
+function currentRoom() {
+  const p = camera.position;
+  for (let i = 0; i < roomBoxes.length; i++) {
+    const b = roomBoxes[i];
+    if (p.x > b.min.x && p.x < b.max.x && p.z > b.min.z && p.z < b.max.z) return i;
+  }
+  return -1;
+}
+
+function checkRoomChange() {
+  const room = currentRoom();
+  if (room === activeRoom) return;
+  activeRoom = room;
+  hudLocation.textContent = room === -1 ? 'Lobby' : ROOMS[room].name;
+  applyAudio();
+  applyPerfMode();
+  if (room === -1) {
+    setStatus('Back in the lobby.');
+  } else {
+    const np = document.getElementById('np-' + room).textContent;
+    setStatus('Entered ' + ROOMS[room].name + (roomLoaded[room] ? ' — ' + np : ' — no playlist loaded on this screen.'));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UI wiring
+// ---------------------------------------------------------------------------
+const form = document.getElementById('playlist-form');
+const enterBtn = document.getElementById('enter-btn');
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  let loadedAny = false, hadError = false, firstInvalid = null;
+  for (let i = 0; i < N; i++) {
+    const input = document.getElementById('playlist-' + i);
+    const errorEl = document.getElementById('error-' + i);
+    const content = parseInput(input.value);
+    if (content === undefined) {
+      errorEl.textContent = "This doesn't look like a YouTube link — paste a playlist URL (…?list=PL…), a video URL, or a bare ID.";
+      errorEl.classList.add('visible');
+      input.setAttribute('aria-invalid', 'true');
+      hadError = true;
+      if (!firstInvalid) firstInvalid = input;
+      continue;
+    }
+    errorEl.textContent = '';
+    errorEl.classList.remove('visible');
+    input.removeAttribute('aria-invalid');
+    if (content) {
+      loadContent(i, content);
+      loadedAny = true;
+    }
+  }
+  if (hadError) {
+    setStatus('Some screens were not loaded — fix the highlighted links.');
+    firstInvalid.focus();
+  } else if (loadedAny) {
+    setStatus(apiReady ? 'Screens loading…' : 'Waiting for the YouTube player to load…');
+  } else {
+    setStatus('Enter at least one playlist to light up a screen.');
+  }
+});
+
+for (let i = 0; i < N; i++) {
+  document.getElementById('playlist-' + i).addEventListener('input', (e) => {
+    document.getElementById('error-' + i).classList.remove('visible');
+    e.target.removeAttribute('aria-invalid');
+  });
+}
+
+perfCheckbox.addEventListener('change', applyPerfMode);
+// Six videos decoding at once is a lot for a phone — default performance
+// mode on for touch devices (the user can untick it).
+if (isTouch) perfCheckbox.checked = true;
+
+function enterWalk() {
+  walking = true;
+  document.body.classList.add('locked');
+  document.body.classList.remove('menu-open');
+}
+function exitWalk() {
+  walking = false;
+  keys.clear();
+  document.body.classList.remove('locked');
+  document.body.classList.add('menu-open');
+  enterBtn.focus();
+}
+
+enterBtn.addEventListener('click', () => {
+  if (isTouch) enterWalk(); // no pointer lock on touch — just switch modes
+  else controls.lock();
+});
+document.getElementById('menu-btn').addEventListener('click', exitWalk);
+
+controls.addEventListener('lock', enterWalk);
+controls.addEventListener('unlock', exitWalk);
+
+// ---------------------------------------------------------------------------
+// Media actions — shared by keyboard shortcuts and the touch buttons.
+// They control the room the walker is standing in.
+// ---------------------------------------------------------------------------
+function activePlayer() {
+  const p = activeRoom >= 0 ? players[activeRoom] : null;
+  if (!p || !playerReady[activeRoom]) {
+    setStatus('Step into a screen room to control its playback.');
+    return null;
+  }
+  return p;
+}
+function togglePlay() {
+  const p = activePlayer();
+  if (!p) return;
+  if (p.getPlayerState() === YT.PlayerState.PLAYING) { p.pauseVideo(); setStatus('Paused.'); }
+  else p.playVideo();
+}
+function nextVideo() { const p = activePlayer(); if (p) p.nextVideo(); }
+function prevVideo() { const p = activePlayer(); if (p) p.previousVideo(); }
+function toggleMute() {
+  userMuted = !userMuted;
+  applyAudio();
+  setStatus(userMuted ? 'Muted.' : 'Sound on.');
+  const btn = document.getElementById('tp-mute');
+  btn.setAttribute('aria-pressed', String(userMuted));
+  btn.textContent = userMuted ? '🔇' : '🔊';
+}
+function changeVolume(delta) {
+  userVolume = THREE.MathUtils.clamp(userVolume + delta, 0, 100);
+  applyAudio();
+  setStatus('Volume ' + userVolume + '%');
+}
+document.getElementById('tp-play').addEventListener('click', togglePlay);
+document.getElementById('tp-next').addEventListener('click', nextVideo);
+document.getElementById('tp-prev').addEventListener('click', prevVideo);
+document.getElementById('tp-mute').addEventListener('click', toggleMute);
+
+// Single-key media shortcuts — only while pointer-locked (walking), so they
+// can never collide with typing in the menu. They control the room you're in.
+document.addEventListener('keydown', (e) => {
+  if (!walking) {
+    keys.clear();
+    return;
+  }
+  // On touch devices there is no pointer lock, so handle Esc ourselves
+  // (covers tablets with external keyboards).
+  if (e.code === 'Escape' && !controls.isLocked) {
+    exitWalk();
+    return;
+  }
+  keys.add(e.code);
+  switch (e.code) {
+    case 'Space': e.preventDefault(); togglePlay(); break;
+    case 'KeyN': nextVideo(); break;
+    case 'KeyP': prevVideo(); break;
+    case 'KeyM': toggleMute(); break;
+    case 'Minus': changeVolume(-10); break;
+    case 'Equal': changeVolume(10); break;
+  }
+});
+document.addEventListener('keyup', (e) => keys.delete(e.code));
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  glRenderer.setSize(innerWidth, innerHeight);
+  cssRenderer.setSize(innerWidth, innerHeight);
+});
+
+// Dev/test hook
+window.__cinema = { camera, controls, roomBoxes, parseInput };
+
+// ---------------------------------------------------------------------------
+// Render loop
+// ---------------------------------------------------------------------------
+let flickerT = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  updateMovement(dt);
+  checkRoomChange();
+  if (!reducedMotion) {
+    // Gentle projector-style shimmer on the screen lights
+    flickerT += dt;
+    screenLights.forEach((l, i) => {
+      l.intensity = 40 + Math.sin(flickerT * 1.7 + i * 1.3) * 3;
+    });
+  }
+  glRenderer.render(scene, camera);
+  cssRenderer.render(cssScene, camera);
+}
+animate();
+</script>
+</body>
+</html>
