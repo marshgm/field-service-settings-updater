@@ -12,10 +12,14 @@ external service it talks to is YouTube itself.
 
 ## How it works
 
-The multiplex (lobby corridor, six rooms with tartan-upholstered seats,
-curtains, audiences, door signs and lighting) is rendered with WebGL — the
-tartan is drawn procedurally onto a canvas texture, so no image assets are
-needed. Each room's YouTube player is
+The multiplex is rendered with WebGL: a bright, modern concourse with purple
+and blue accent lighting (Scottish Summit colours) leading to six dark cinema
+rooms, each with a stage below the screen, tartan-upholstered seats and a
+full house of Sims-style audience members (instanced meshes, so ~300 people
+cost six draw calls). The tartan and signage are drawn procedurally onto
+canvas textures, so no image assets are needed. The marquee above each door
+shows the Summit year and updates live with the title of whatever that room
+is playing. Each room's YouTube player is
 a real `<iframe>` positioned in the same 3D space using Three.js's
 `CSS3DRenderer`; the WebGL scene punches a transparent hole where each screen
 is, so the videos show through in correct perspective and keep playing while
@@ -104,5 +108,5 @@ button on a screen once; everything is keyboard-driven after that.
 
 - Some videos disallow embedding ("Watch on YouTube") — the app reports this
   and you can skip with `N` in that room.
-- It's single-player: the "people" in the seats are ambient low-poly locals,
-  not other users.
+- It's single-player: the audience in the seats are ambient Sims-style
+  locals, not other users.
