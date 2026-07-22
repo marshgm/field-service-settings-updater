@@ -43,8 +43,13 @@ GitHub Pages — point Pages at this folder (or the repo root and browse to
 ## Using it
 
 1. Paste up to five YouTube **playlist URLs** (anything with `?list=PL…`),
-   **video URLs**, or bare playlist/video IDs — one per screen. Leave a screen
-   blank to keep that room dark.
+   **video URLs**, **channel URLs** (`/channel/UC…`, `/@handle`, `/c/…`,
+   `/user/…` — these play the channel's uploads), or bare playlist/video/
+   channel IDs — one per screen. Google search redirect links
+   (`google.com/url?...url=…`) are unwrapped automatically. Leave a screen
+   blank to keep that room dark. The inputs come preloaded with the
+   [Scottish Summit](https://www.youtube.com/@ScottishSummit) yearly session
+   playlists as a demo — swap in your own any time.
 2. Press **Load the screens**, then **Enter the multiplex** to start walking
    (this locks the mouse pointer for looking around). Follow the lit signs —
    Screens 1, 3 and 5 are on the left of the lobby, 2 and 4 on the right.

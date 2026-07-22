@@ -203,25 +203,33 @@
       <div class="screen-field">
         <label for="playlist-0">Screen 1</label>
         <input type="text" id="playlist-0" autocomplete="off" spellcheck="false"
-               aria-describedby="error-0 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+               aria-describedby="error-0 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5NoqrVxeUqcXndp1mLnF8tM"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
         <p class="error" id="error-0"></p>
       </div>
       <div class="screen-field">
         <label for="playlist-1">Screen 2</label>
         <input type="text" id="playlist-1" autocomplete="off" spellcheck="false"
-               aria-describedby="error-1 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+               aria-describedby="error-1 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5N4dPepIN2ay4WgYecwDwfw"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
         <p class="error" id="error-1"></p>
       </div>
       <div class="screen-field">
         <label for="playlist-2">Screen 3</label>
         <input type="text" id="playlist-2" autocomplete="off" spellcheck="false"
-               aria-describedby="error-2 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+               aria-describedby="error-2 form-hint"
+               value="https://www.youtube.com/playlist?list=PLGVTrXAewf5MOKJ3Q6DZ0T3hp1FQimf_p"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
         <p class="error" id="error-2"></p>
       </div>
       <div class="screen-field">
         <label for="playlist-3">Screen 4</label>
         <input type="text" id="playlist-3" autocomplete="off" spellcheck="false"
-               aria-describedby="error-3 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
+               aria-describedby="error-3 form-hint"
+               value="https://www.youtube.com/channel/UCaF2SdamxFf6rc0q7UPombQ"
+               placeholder="https://www.youtube.com/playlist?list=PL…">
         <p class="error" id="error-3"></p>
       </div>
       <div class="screen-field">
@@ -230,7 +238,7 @@
                aria-describedby="error-4 form-hint" placeholder="https://www.youtube.com/playlist?list=PL…">
         <p class="error" id="error-4"></p>
       </div>
-      <p class="hint" id="form-hint">Paste a playlist URL, a video URL, or a bare playlist ID (starts with “PL”). Leave a screen blank to keep that room dark.</p>
+      <p class="hint" id="form-hint">Paste a playlist URL, a video URL, a channel URL (plays that channel's uploads), or a bare playlist ID. Google redirect links are unwrapped automatically. Leave a screen blank to keep that room dark. The screens come preloaded with Scottish Summit's yearly playlists — swap in your own any time.</p>
     </fieldset>
     <button type="submit" class="btn btn-primary" id="load-btn">Load the screens</button>
   </form>
@@ -631,19 +639,37 @@ function setStatus(msg) {
 }
 
 function parseInput(raw) {
-  const value = raw.trim();
+  let value = raw.trim();
   if (!value) return null;
+  // Unwrap Google search redirect links (google.com/url?...&url=<real link>)
+  try {
+    const u = new URL(value.includes('://') ? value : 'https://' + value);
+    if (u.hostname.endsWith('google.com') && u.pathname === '/url') {
+      const target = u.searchParams.get('url') || u.searchParams.get('q');
+      if (target) value = target;
+    }
+  } catch { /* not a URL */ }
   try {
     const url = new URL(value.includes('://') ? value : 'https://' + value);
     const list = url.searchParams.get('list');
     if (list) return { type: 'playlist', id: list };
     const v = url.searchParams.get('v');
     if (v) return { type: 'video', id: v };
-    const short = url.pathname.match(/^\/(?:shorts\/|embed\/)?([A-Za-z0-9_-]{11})$/);
-    if (url.hostname.includes('youtu') && short) return { type: 'video', id: short[1] };
+    if (url.hostname.includes('youtu')) {
+      // Channel link with a real channel ID: play its uploads playlist (UU…)
+      const chan = url.pathname.match(/^\/channel\/(UC[A-Za-z0-9_-]{10,})/);
+      if (chan) return { type: 'playlist', id: 'UU' + chan[1].slice(2) };
+      // Handle / custom / legacy channel URLs: best-effort channel uploads
+      const handle = url.pathname.match(/^\/(?:@|c\/|user\/)([A-Za-z0-9._-]+)/);
+      if (handle) return { type: 'uploads', id: handle[1] };
+      const short = url.pathname.match(/^\/(?:shorts\/|embed\/)?([A-Za-z0-9_-]{11})$/);
+      if (short) return { type: 'video', id: short[1] };
+    }
   } catch { /* not a URL — fall through to raw-ID handling */ }
+  if (/^UC[A-Za-z0-9_-]{10,}$/.test(value)) return { type: 'playlist', id: 'UU' + value.slice(2) };
   if (/^(PL|UU|OL|RD|FL)[A-Za-z0-9_-]{10,}$/.test(value)) return { type: 'playlist', id: value };
   if (/^[A-Za-z0-9_-]{11}$/.test(value)) return { type: 'video', id: value };
+  if (/^@[A-Za-z0-9._-]+$/.test(value)) return { type: 'uploads', id: value.slice(1) };
   return undefined; // present but unparseable
 }
 
@@ -679,6 +705,7 @@ function loadContent(i, content) {
     return;
   }
   if (content.type === 'playlist') players[i].loadPlaylist({ list: content.id, listType: 'playlist' });
+  else if (content.type === 'uploads') players[i].loadPlaylist({ list: content.id, listType: 'user_uploads' });
   else players[i].loadVideoById(content.id);
   roomLoaded[i] = true;
   applyAudio();
@@ -865,7 +892,7 @@ addEventListener('resize', () => {
 });
 
 // Dev/test hook
-window.__cinema = { camera, controls, roomBoxes };
+window.__cinema = { camera, controls, roomBoxes, parseInput };
 
 // ---------------------------------------------------------------------------
 // Render loop
