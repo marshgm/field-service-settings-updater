@@ -1,6 +1,6 @@
 # YouTube Cinema World
 
-A single-file 3D **five-screen multiplex** you can walk around in your
+A single-file 3D **six-screen multiplex** you can walk around in your
 browser. Give each screen its own YouTube playlist (or single video), then
 wander the lobby corridor and step into whichever room takes your fancy — you
 hear the audio of the room you're standing in. Built with
@@ -12,7 +12,7 @@ external service it talks to is YouTube itself.
 
 ## How it works
 
-The multiplex (lobby corridor, five rooms with seats, curtains, audiences,
+The multiplex (lobby corridor, six rooms with seats, curtains, audiences,
 door signs and lighting) is rendered with WebGL. Each room's YouTube player is
 a real `<iframe>` positioned in the same 3D space using Three.js's
 `CSS3DRenderer`; the WebGL scene punches a transparent hole where each screen
@@ -42,17 +42,18 @@ GitHub Pages — point Pages at this folder (or the repo root and browse to
 
 ## Using it
 
-1. Paste up to five YouTube **playlist URLs** (anything with `?list=PL…`),
+1. Paste up to six YouTube **playlist URLs** (anything with `?list=PL…`),
    **video URLs**, **channel URLs** (`/channel/UC…`, `/@handle`, `/c/…`,
    `/user/…` — these play the channel's uploads), or bare playlist/video/
    channel IDs — one per screen. Google search redirect links
    (`google.com/url?...url=…`) are unwrapped automatically. Leave a screen
    blank to keep that room dark. The inputs come preloaded with the
    [Scottish Summit](https://www.youtube.com/@ScottishSummit) yearly session
-   playlists as a demo — swap in your own any time.
+   playlists — 2020, 2021, 2022, 2023, 2024 and 2026, one per screen — swap in your
+   own any time.
 2. Press **Load the screens**, then **Enter the multiplex** to start walking
    (this locks the mouse pointer for looking around). Follow the lit signs —
-   Screens 1, 3 and 5 are on the left of the lobby, 2 and 4 on the right.
+   Screens 1, 3 and 5 are on the left of the lobby, 2, 4 and 6 on the right.
 
 | Key | Action |
 | --- | --- |
@@ -71,7 +72,7 @@ settings, on any screen you can see.
 
 **Performance mode** (checkbox in the menu) pauses the screens in rooms you're
 not in and resumes them when you walk in — kinder to slower machines than
-five videos decoding at once.
+six videos decoding at once.
 
 Note: if the browser blocks unmuted autoplay, press `Esc` and click the play
 button on a screen once; everything is keyboard-driven after that.
@@ -83,7 +84,7 @@ button on a screen once; everything is keyboard-driven after that.
   typing in the menu.
 - The menu is a standard labelled form with visible focus indicators, inline
   per-screen error messages, and a polite live region announcing room changes,
-  player status and current video titles. A "Now showing" list tracks all five
+  player status and current video titles. A "Now showing" list tracks all six
   screens.
 - Captions are available through YouTube's own CC control on each embedded
   player.
