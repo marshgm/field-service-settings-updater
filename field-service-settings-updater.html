@@ -391,6 +391,12 @@
         <button type="button" class="primary small" id="loadBtn">Load Resources</button>
       </div>
     </div>
+    <div class="btnbar" style="margin:10px 0">
+      <button type="button" class="ghost small" id="resourceSelectAllBtn">Select All</button>
+      <button type="button" class="ghost small" id="resourceClearAllBtn">Clear All</button>
+      <button type="button" class="ghost small" id="resourceInvertBtn">Invert Selection</button>
+      <span class="hint">Tip: select or clear one row, then Shift-click another row to apply the same choice to the entire range.</span>
+    </div>
     <div class="tablewrap">
       <table id="resTable">
         <thead><tr>
@@ -639,7 +645,7 @@
    D365 web resource (same-origin fetch). See docs/ARCHITECTURE.md.
    ============================================================================ */
 // Display version. Advance future feature builds through 2.1, 2.2, and so on.
-const APP_VERSION = "3.5 Beta";
+const APP_VERSION = "3.6 Beta";
 const API_VER = "v9.2";
 
 const PPTB = (typeof window !== "undefined") && !!window.dataverseAPI;
@@ -908,6 +914,7 @@ const RES_TYPE = { 1: "Generic", 2: "Contact", 3: "User", 4: "Equipment", 5: "Ac
 // ============================================================================
 let resources = [];                  // loaded bookable resources
 const selected = new Set();          // selected bookableresourceids
+let lastResourceSelectionId = null;  // anchor for Shift-click range selection
 let orgUnits = [];                   // { id, name }
 let businessUnits = [];              // { id, name }
 let resourceTimeZones = [];          // { code, name } distinct values used by resources
@@ -1101,6 +1108,7 @@ async function loadResources() {
     await enrichResourceAddresses(resources);   // resolve related-record address/geocode/country
     if (country) resources = resources.filter(item => String(item.country || "").toLocaleLowerCase().includes(country));
     selected.clear();
+    lastResourceSelectionId = null;
     renderResources();
     fillSourceSelect();
     log(`Loaded ${resources.length} resource(s).`);
@@ -1225,9 +1233,21 @@ function renderResources() {
       `<td>${boolLabel(r.timeoff)}</td>`;
     tb.appendChild(tr);
   }
-  tb.querySelectorAll(".rowck").forEach(cb => cb.addEventListener("change", () => {
+  tb.querySelectorAll(".rowck").forEach(cb => cb.addEventListener("click", event => {
     const id = cb.dataset.id;
-    if (cb.checked) selected.add(id); else selected.delete(id);
+    const ordered = sortedResources();
+    if (event.shiftKey && lastResourceSelectionId) {
+      const start = ordered.findIndex(r => r.id === lastResourceSelectionId);
+      const end = ordered.findIndex(r => r.id === id);
+      if (start !== -1 && end !== -1) {
+        const [from, to] = start < end ? [start, end] : [end, start];
+        for (let i = from; i <= to; i++) {
+          if (cb.checked) selected.add(ordered[i].id); else selected.delete(ordered[i].id);
+        }
+        tb.querySelectorAll(".rowck").forEach(box => { box.checked = selected.has(box.dataset.id); });
+      }
+    } else if (cb.checked) selected.add(id); else selected.delete(id);
+    lastResourceSelectionId = id;
     updateSelCount();
   }));
   updateSortHeaders();
@@ -1241,6 +1261,22 @@ function updateSelCount() {
 $("selAll").addEventListener("change", () => {
   if ($("selAll").checked) resources.forEach(r => selected.add(r.id));
   else selected.clear();
+  lastResourceSelectionId = null;
+  renderResources();
+});
+$("resourceSelectAllBtn").addEventListener("click", () => {
+  resources.forEach(r => selected.add(r.id));
+  lastResourceSelectionId = null;
+  renderResources();
+});
+$("resourceClearAllBtn").addEventListener("click", () => {
+  selected.clear();
+  lastResourceSelectionId = null;
+  renderResources();
+});
+$("resourceInvertBtn").addEventListener("click", () => {
+  resources.forEach(r => selected.has(r.id) ? selected.delete(r.id) : selected.add(r.id));
+  lastResourceSelectionId = null;
   renderResources();
 });
 
