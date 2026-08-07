@@ -80,6 +80,8 @@ The Activity Log is displayed as Timestamp, Resource, and Message columns. Resou
 
 The **Export Calendar Rules** section exports flattened parent and inner calendar rules for the resources selected in Section 1. Working Hours, Non-Working Hours, Time Off, and Holidays/Exceptions can be included independently. Calendar reads use configurable bounded parallelism (six resources at a time by default) with transient retry handling, making large exports substantially faster without issuing all requests at once. The CSV contains resource, Organizational Unit, Owning Business Unit, Region/Territory, Country, resource time zone, parent/inner calendar IDs, rule level and type, effort, duration, rank, variation, times, offsets, patterns, names, descriptions, and all additional scalar rule fields returned by Dataverse. Export filenames begin with `Exported Calendar Rules -` followed by a UTC timestamp. Every CSV header uses PascalCase without spaces or punctuation, including dynamically returned `Rule` properties.
 
+Read-only Work Hours and Calendar Time Zone previews use up to six parallel resource readers. Work Hours and Calendar Time Zone updates use up to four parallel resource workers while preserving sequential operations within each individual calendar. The application header remains fixed while scrolling and displays the busy spinner plus a **Cancel Current Action** button. Cancellation aborts active browser requests where supported and otherwise stops cooperatively before the next resource or rule; changes completed before cancellation are not rolled back. Calendar-rule deletion remains sequential to avoid conflicting destructive operations.
+
 ## Using it
 
 ### Power Platform ToolBox

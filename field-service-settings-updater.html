@@ -15,7 +15,7 @@
   button:not(:disabled):hover { filter: brightness(0.92); }
   input::placeholder { color: #8a8f98; opacity: 1; }
   body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; background: var(--bg); color: var(--ink); }
-  header { background: var(--charcoal); color: #fff; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header { background: var(--charcoal); color: #fff; padding: 16px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 10px #0003; }
   header .logo { width: 32px; height: 32px; flex: 0 0 auto; }
   header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   header .author { color: #9a9a9a; font-size: 12px; font-style: italic; }
@@ -24,6 +24,10 @@
   .spinner { width: 18px; height: 18px; flex: 0 0 auto; margin-left: 14px; border-radius: 50%;
     border: 3px solid rgba(255,255,255,.25); border-top-color: var(--red); animation: spin .8s linear infinite; }
   .spinner[hidden] { display: none; }
+  .cancel-action { padding: 5px 10px; border: 1px solid #ff8c9f; border-radius: 6px; background: #8f1830; color: #fff; font-weight: 600; cursor: pointer; }
+  .cancel-action:hover { background: #b31d3b; }
+  .cancel-action[hidden] { display: none; }
+  .cancel-action:disabled { opacity: .65; cursor: default; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-top-color: #fff; } }
   body[data-host="xtb"] .spinner { border-color: #808080; border-top-color: #000080; }
@@ -311,6 +315,7 @@
   <h1>Field Service Resource Updater</h1>
   <span class="author">by Mark Christie</span>
   <span id="spin" class="spinner" role="status" aria-label="Working" title="Working…" hidden></span>
+  <button type="button" id="cancelActionBtn" class="cancel-action" hidden>Cancel Current Action</button>
   <button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch color theme">☀ Light</button>
   <span id="envlabel">resolving environment…</span>
   <span class="ver" id="verlabel" title="Tool build / Dataverse org version">v…</span>
@@ -656,7 +661,7 @@
    D365 web resource (same-origin fetch). See docs/ARCHITECTURE.md.
    ============================================================================ */
 // Display version. Advance future feature builds through 2.1, 2.2, and so on.
-const APP_VERSION = "3.7 Beta";
+const APP_VERSION = "3.8 Beta";
 const API_VER = "v9.2";
 
 const PPTB = (typeof window !== "undefined") && !!window.dataverseAPI;
@@ -801,6 +806,41 @@ async function openRecord(etn, id) {
 }
 
 // ---------- Web API plumbing (host-agnostic) ----------
+let ACTIVE_ACTION = null;
+function beginCancellableAction(label) {
+  ACTIVE_ACTION = { label, cancelled: false, controller: typeof AbortController !== "undefined" ? new AbortController() : null };
+  const button = $("cancelActionBtn");
+  button.hidden = false; button.disabled = false; button.textContent = "Cancel Current Action";
+}
+function cancelCurrentAction() {
+  if (!ACTIVE_ACTION || ACTIVE_ACTION.cancelled) return;
+  ACTIVE_ACTION.cancelled = true;
+  if (ACTIVE_ACTION.controller) ACTIVE_ACTION.controller.abort();
+  const button = $("cancelActionBtn");
+  button.disabled = true; button.textContent = "Cancelling…";
+  log(`Cancellation requested for ${ACTIVE_ACTION.label}. Current Dataverse request(s) may need to finish first.`);
+}
+function endCancellableAction() {
+  ACTIVE_ACTION = null;
+  const button = $("cancelActionBtn");
+  button.hidden = true; button.disabled = false; button.textContent = "Cancel Current Action";
+}
+function actionWasCancelled() {
+  return !!(ACTIVE_ACTION && ACTIVE_ACTION.cancelled);
+}
+function throwIfActionCancelled() {
+  if (actionWasCancelled()) {
+    const error = new Error("Action cancelled by user.");
+    error.name = "ActionCancelledError";
+    throw error;
+  }
+}
+function isActionCancellation(error) {
+  return actionWasCancelled() || (error && (error.name === "AbortError" || error.name === "ActionCancelledError"));
+}
+function activeFetchSignal() {
+  return ACTIVE_ACTION && ACTIVE_ACTION.controller ? ACTIVE_ACTION.controller.signal : undefined;
+}
 function baseUrl() {
   if (XTB && window.XTB_CONFIG.baseUrl) return window.XTB_CONFIG.baseUrl.replace(/\/+$/, "") + `/api/data/${API_VER}`;
   return `/api/data/${API_VER}`;
@@ -818,7 +858,7 @@ function relPath(p) { const m = p.match(/\/api\/data\/v9\.\d+\/(.*)$/); return (
 // GET a query path like "bookableresources?$select=..." → { value: [...] } (single page).
 async function dvQuery(pathWithQuery, extraHeaders) {
   if (PPTB) return await window.dataverseAPI.queryData(relPath(pathWithQuery));
-  const r = await fetch(`${baseUrl()}/${relPath(pathWithQuery)}`, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin" });
+  const r = await fetch(`${baseUrl()}/${relPath(pathWithQuery)}`, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin", signal: activeFetchSignal() });
   if (!r.ok) throw new Error(`GET ${r.status}: ${(await r.text()).slice(0, 300)}`);
   return r.json();
 }
@@ -831,7 +871,7 @@ async function dvQueryAll(pathWithQuery, extraHeaders) {
   }
   let url = `${baseUrl()}/${relPath(pathWithQuery)}`;
   while (url) {
-    const r = await fetch(url, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin" });
+    const r = await fetch(url, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin", signal: activeFetchSignal() });
     if (!r.ok) throw new Error(`GET ${r.status}: ${(await r.text()).slice(0, 300)}`);
     const d = await r.json();
     out.push(...(d.value || []));
@@ -841,42 +881,42 @@ async function dvQueryAll(pathWithQuery, extraHeaders) {
 }
 async function dvUpdate(logicalName, entitySet, id, patch) {
   if (PPTB) { await window.dataverseAPI.update(logicalName, id, patch); return; }
-  const r = await fetch(`${baseUrl()}/${entitySet}(${id})`, { method: "PATCH", credentials: "same-origin", headers: headers({ "If-Match": "*" }), body: JSON.stringify(patch) });
+  const r = await fetch(`${baseUrl()}/${entitySet}(${id})`, { method: "PATCH", credentials: "same-origin", headers: headers({ "If-Match": "*" }), body: JSON.stringify(patch), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
 }
 async function dvCreate(logicalName, entitySet, record) {
   if (PPTB) { const res = await window.dataverseAPI.create(logicalName, record); return res && (res.id || res); }
-  const r = await fetch(`${baseUrl()}/${entitySet}`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify(record) });
+  const r = await fetch(`${baseUrl()}/${entitySet}`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify(record), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
   const loc = r.headers.get("OData-EntityId") || "";
   const m = loc.match(/\(([0-9a-f-]{36})\)/i); return m ? m[1] : null;
 }
 async function dvDelete(logicalName, entitySet, id) {
   if (PPTB) { await window.dataverseAPI.delete(logicalName, id); return; }
-  const r = await fetch(`${baseUrl()}/${entitySet}(${id})`, { method: "DELETE", credentials: "same-origin", headers: headers() });
+  const r = await fetch(`${baseUrl()}/${entitySet}(${id})`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
 }
 // Clear a single-valued lookup (web/XTB use the $ref DELETE; PPTB falls back to a null bind).
 async function dvClearLookup(logicalName, entitySet, id, navProperty, bindField) {
   if (PPTB) { await window.dataverseAPI.update(logicalName, id, { [bindField + "@odata.bind"]: null }); return; }
-  const r = await fetch(`${baseUrl()}/${entitySet}(${id})/${navProperty}/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers() });
+  const r = await fetch(`${baseUrl()}/${entitySet}(${id})/${navProperty}/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
   if (!r.ok && r.status !== 404) throw new Error(await errText(r));
 }
 // N:N associate / disassociate (e.g. systemuser ↔ role via systemuserroles_association).
 async function dvAssociate(pLogical, pSet, pId, rel, rLogical, rSet, rId) {
   if (PPTB) { await window.dataverseAPI.associate(pLogical, pId, rel, rLogical, rId); return; }
-  const r = await fetch(`${baseUrl()}/${pSet}(${pId})/${rel}/$ref`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify({ "@odata.id": `${baseUrl()}/${rSet}(${rId})` }) });
+  const r = await fetch(`${baseUrl()}/${pSet}(${pId})/${rel}/$ref`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify({ "@odata.id": `${baseUrl()}/${rSet}(${rId})` }), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
 }
 async function dvDisassociate(pLogical, pSet, pId, rel, rSet, rId) {
   if (PPTB) { await window.dataverseAPI.disassociate(pLogical, pId, rel, rId); return; }
-  const r = await fetch(`${baseUrl()}/${pSet}(${pId})/${rel}(${rId})/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers() });
+  const r = await fetch(`${baseUrl()}/${pSet}(${pId})/${rel}(${rId})/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
   if (!r.ok && r.status !== 404) throw new Error(await errText(r));
 }
 // Unbound action (e.g. msdyn_SaveCalendar / msdyn_DeleteCalendar / msdyn_LoadCalendars).
 async function dvAction(name, params) {
   if (PPTB) return await window.dataverseAPI.execute({ operationName: name, operationType: "action", parameters: params || {} });
-  const r = await fetch(`${baseUrl()}/${name}`, { method: "POST", credentials: "same-origin", headers: headers({ "Prefer": 'odata.include-annotations="*"' }), body: JSON.stringify(params || {}) });
+  const r = await fetch(`${baseUrl()}/${name}`, { method: "POST", credentials: "same-origin", headers: headers({ "Prefer": 'odata.include-annotations="*"' }), body: JSON.stringify(params || {}), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
   const txt = await r.text(); return txt ? JSON.parse(txt) : {};
 }
@@ -1673,32 +1713,38 @@ async function previewCalendarTimeZones() {
     if (!Object.values(kinds).some(Boolean)) { $("calTzStatus").textContent = "Select at least one calendar entry type."; return; }
     const target = Number($("calTzTarget").value), targetName = $("calTzTarget").options[$("calTzTarget").selectedIndex].text;
     const makeAllDay = $("calTzAllDay").checked && kinds.timeoff;
+    beginCancellableAction("Calendar Time Zone preview");
     setBusy(true); $("calTzPreviewBtn").disabled = true; $("calTzStatus").textContent = "Inspecting calendar rules…";
-    const items = [];
-    log(`Calendar TZ preview: inspecting ${selected.size} selected resource(s) for target ${targetName}.`);
-    for (const id of selected) {
+    const selectedIds = [...selected];
+    const items = new Array(selectedIds.length);
+    log(`Calendar TZ preview: inspecting ${selected.size} selected resource(s) for target ${targetName} with up to 6 parallel readers.`);
+    await runWithConcurrency(selectedIds, 6, async (id, index) => {
       const resource = resources.find(x => x.id === id);
-      if (!resource) { log(`  ⚠ Resource ${id}: not present in the loaded result.`); continue; }
-      if (!resource.calendarId) { log(`  ⚠ ${resource.name}: no calendar is assigned.`); items.push({ resource, rules: [] }); continue; }
+      if (!resource) { log(`  ⚠ Resource ${id}: not present in the loaded result.`); return; }
+      if (!resource.calendarId) { log(`  ⚠ ${resource.name}: no calendar is assigned.`); items[index] = { resource, rules: [] }; return; }
       const roots = await loadCalendarRules(resource.calendarId);
       const inspected = [];
-      for (const root of roots) inspected.push(await inspectOuterCalendarRule(root, target));
+      for (const root of roots) {
+        throwIfActionCancelled();
+        inspected.push(await inspectOuterCalendarRule(root, target));
+      }
       const discovered = { working: 0, nonworking: 0, timeoff: 0, excluded: 0 };
       inspected.forEach(r => discovered[r.kind]++);
       const rules = inspected.filter(rule => kinds[rule.kind] && (rule._needsTimeZone || (makeAllDay && rule.kind === "timeoff" && !rule._isAllDay)));
-      items.push({ resource, rules });
+      items[index] = { resource, rules };
       log(`  ${resource.name} [${resource.calendarId}]: ${roots.length} outer rule(s); found ${discovered.working} working, ${discovered.nonworking} non-working, ${discovered.timeoff} time off, ${discovered.excluded} excluded; ${rules.length} to update.`);
       rules.forEach(rule => log(`    queued ${rule.kind}: ${calendarRuleContext(rule)}`, resource));
-    }
-    const total = items.reduce((n, x) => n + x.rules.length, 0);
-    CAL_TZ_PLAN = { target, targetName, makeAllDay, items };
-    items.forEach(item => item.rules.forEach(rule => CAL_TZ_SELECTED.add(calendarRuleKey(item.resource, rule))));
-    let html = `<p><b>${total}</b> calendar rule(s) across <b>${items.filter(x => x.rules.length).length}</b> resource(s) will be updated to <b>${escapeHtml(targetName)}</b>.</p>`;
+    }, completed => { $("calTzStatus").textContent = `Inspected ${completed} of ${selectedIds.length} resource calendar(s)…`; });
+    const completedItems = items.filter(Boolean);
+    const total = completedItems.reduce((n, x) => n + x.rules.length, 0);
+    CAL_TZ_PLAN = { target, targetName, makeAllDay, items: completedItems };
+    completedItems.forEach(item => item.rules.forEach(rule => CAL_TZ_SELECTED.add(calendarRuleKey(item.resource, rule))));
+    let html = `<p><b>${total}</b> calendar rule(s) across <b>${completedItems.filter(x => x.rules.length).length}</b> resource(s) will be updated to <b>${escapeHtml(targetName)}</b>.</p>`;
     if (makeAllDay) html += `<div class="warnbox">Selected Time Off entries will also be changed to all-day events while preserving their event date and reason.</div>`;
     if (total) {
       html += `<div class="btnbar" style="margin:8px 0"><button type="button" class="ghost small" id="calRuleSelectAllBtn">Select All</button><button type="button" class="ghost small" id="calRuleClearBtn">Clear</button><span class="selcount" id="calRuleSelectedCount">${total} Selected</span></div>`;
       html += `<div class="tablewrap"><table id="calTzPreviewTable"><thead><tr>${sortableHeader("selected", "Selected")}${sortableHeader("resource", "Resource")}${sortableHeader("type", "Type")}${sortableHeader("datetime", "Date / Time")}${sortableHeader("timezone", "Current Time Zone")}${sortableHeader("reason", "Name / Reason")}</tr></thead><tbody>`;
-      for (const item of items) for (const rule of item.rules) {
+      for (const item of completedItems) for (const rule of item.rules) {
         const key = calendarRuleKey(item.resource, rule);
         const interval = [rule._eventStart, rule._eventEnd].filter(Boolean).join(" → ") || "Not available";
         const reason = rule.kind === "timeoff" ? rule._eventDescription : (rule.name || rule.description || "—");
@@ -1721,9 +1767,11 @@ async function previewCalendarTimeZones() {
     $("calTzStatus").textContent = total ? "Preview ready." : "Nothing to update.";
     log(`Calendar TZ preview: ${total} rule(s), target ${targetName}${makeAllDay ? ", Time Off → All Day" : ""}.`);
   } catch (e) {
-    CAL_TZ_PLAN = null; CAL_TZ_SELECTED.clear(); $("calTzStatus").textContent = "Preview failed — see log."; log("✖ Calendar TZ preview failed: " + e.message);
+    CAL_TZ_PLAN = null; CAL_TZ_SELECTED.clear();
+    if (isActionCancellation(e)) { $("calTzStatus").textContent = "Preview cancelled."; log("Calendar TZ preview cancelled."); }
+    else { $("calTzStatus").textContent = "Preview failed — see log."; log("✖ Calendar TZ preview failed: " + e.message); }
   } finally {
-    $("calTzPreviewBtn").disabled = false; setBusy(false);
+    $("calTzPreviewBtn").disabled = false; setBusy(false); endCancellableAction();
   }
 }
 async function updateCalendarRuleTree(rule, target, resource) {
@@ -1788,6 +1836,7 @@ async function applyCalendarTimeZones() {
   if (!CAL_TZ_SELECTED.size) { $("calTzStatus").textContent = "Select at least one calendar rule."; return; }
   let ok = 0, failed = 0;
   try {
+    beginCancellableAction("Calendar Time Zone update");
     setBusy(true); $("calTzPreviewBtn").disabled = true; $("calTzApplyBtn").disabled = true;
     const selectedItems = items.map(item => ({
       resource: item.resource,
@@ -1795,11 +1844,11 @@ async function applyCalendarTimeZones() {
     })).filter(item => item.rules.length);
     const pending = selectedItems.reduce((n, x) => n + x.rules.length, 0);
     let current = 0;
-    log(`Calendar TZ update starting: ${pending} selected rule(s) across ${selectedItems.length} resource(s).`);
-    for (const item of selectedItems) {
-      if (!item.rules.length) continue;
+    log(`Calendar TZ update starting: ${pending} selected rule(s) across ${selectedItems.length} resource(s), using up to 4 parallel resource workers.`);
+    await runWithConcurrency(selectedItems, 4, async item => {
       log(`▶ ${item.resource.name}: starting ${item.rules.length} calendar update(s).`);
       for (const rule of item.rules) {
+        throwIfActionCancelled();
         current++;
         const date = String(rule._eventStart || rule.starttime || "").slice(0, 10) || "no date";
         const action = makeAllDay && rule.kind === "timeoff"
@@ -1814,18 +1863,29 @@ async function applyCalendarTimeZones() {
           } else await updateCalendarRuleTree(rule, target, item.resource);
           ok++; log(`  ✓ ${item.resource.name}: completed ${rule.kind} rule on ${date}.`);
         } catch (e) {
+          if (isActionCancellation(e)) throw e;
           failed++;
           log(`  ✖ ${item.resource.name} (${rule.kind}) failed: ${e && e.message ? e.message : String(e)}`);
           log(`    failure context: resource=${item.resource.id}; calendar=${item.resource.calendarId}; targetTZ=${target} (${CAL_TZ_PLAN.targetName}); makeAllDay=${makeAllDay}; ${calendarRuleContext(rule)}`);
         }
       }
       log(`■ ${item.resource.name}: finished.`);
-    }
+    }, completed => {
+      $("calTzStatus").textContent = `Completed ${completed} of ${selectedItems.length} resource calendar(s); ${ok} rule(s) updated${failed ? `, ${failed} failed` : ""}…`;
+    });
     log(`Calendar TZ update done: ${ok} succeeded, ${failed} failed.`);
     notify("Calendar time zones updated", `${ok} rule(s) updated${failed ? `, ${failed} failed` : ""}.`, failed ? "warning" : "success");
     $("calTzStatus").textContent = `${ok} updated${failed ? `, ${failed} failed` : ""}.`;
+  } catch (e) {
+    if (isActionCancellation(e)) {
+      log(`Calendar TZ update cancelled: ${ok} succeeded before cancellation, ${failed} failed.`);
+      $("calTzStatus").textContent = `Cancelled after ${ok} update(s)${failed ? `; ${failed} failed` : ""}.`;
+    } else {
+      log(`✖ Calendar TZ update stopped: ${e.message}`);
+      $("calTzStatus").textContent = "Update stopped — see log.";
+    }
   } finally {
-    setBusy(false); $("calTzPreviewBtn").disabled = false; CAL_TZ_PLAN = null; CAL_TZ_SELECTED.clear();
+    setBusy(false); $("calTzPreviewBtn").disabled = false; CAL_TZ_PLAN = null; CAL_TZ_SELECTED.clear(); endCancellableAction();
   }
 }
 
@@ -2017,9 +2077,11 @@ async function runWithConcurrency(items, concurrency, worker, onComplete) {
   let completed = 0;
   const runner = async () => {
     while (true) {
+      throwIfActionCancelled();
       const index = nextIndex++;
       if (index >= items.length) return;
       await worker(items[index], index);
+      throwIfActionCancelled();
       completed++;
       if (onComplete) onComplete(completed, items[index], index);
     }
@@ -2037,8 +2099,14 @@ async function loadResourceRegionNames(list, concurrency = 4) {
   }
   await runWithConcurrency(batches, Math.min(4, concurrency), async batch => {
     const filter = batch.map(resource => `_msdyn_resource_value eq ${resource.id}`).join(" or ");
-    const links = await retryCalendarExportRead(() =>
-      dvQueryAll(`msdyn_resourceterritories?$select=_msdyn_resource_value,_msdyn_territory_value&$filter=${encodeURIComponent(filter)}`)).catch(() => []);
+    let links;
+    try {
+      links = await retryCalendarExportRead(() =>
+        dvQueryAll(`msdyn_resourceterritories?$select=_msdyn_resource_value,_msdyn_territory_value&$filter=${encodeURIComponent(filter)}`));
+    } catch (error) {
+      if (isActionCancellation(error)) throw error;
+      links = [];
+    }
     for (const link of links) {
       const resourceId = link._msdyn_resource_value;
       const territoryId = link._msdyn_territory_value;
@@ -2159,6 +2227,7 @@ async function exportSelectedCalendarRules() {
   const rowsByResource = new Array(chosen.length);
   let failed = 0;
   try {
+    beginCancellableAction("Calendar Rule export");
     setBusy(true);
     button.disabled = true;
     status.textContent = "Loading region assignments…";
@@ -2188,6 +2257,7 @@ async function exportSelectedCalendarRules() {
         rowsByResource[index] = resourceRows;
         log(`Prepared ${exportedForResource} flattened calendar rule row(s) for export.`, resource);
       } catch (error) {
+        if (isActionCancellation(error)) throw error;
         failed++;
         rowsByResource[index] = resourceRows;
         log(`Calendar export failed: ${error.message}`, resource);
@@ -2211,9 +2281,18 @@ async function exportSelectedCalendarRules() {
     downloadObjectCsv(filename, preferred, output);
     status.textContent = `${output.length} calendar rule row(s) exported${failed ? `; ${failed} resource(s) failed` : ""}.`;
     log(`Calendar export complete: ${output.length} row(s), ${failed} failed resource(s).`);
+  } catch (error) {
+    if (isActionCancellation(error)) {
+      status.textContent = "Export cancelled. No CSV was downloaded.";
+      log("Calendar export cancelled. No CSV was downloaded.");
+    } else {
+      status.textContent = "Export failed — see log.";
+      log(`Calendar export stopped: ${error.message}`);
+    }
   } finally {
     setBusy(false);
     button.disabled = false;
+    endCancellableAction();
   }
 }
 
@@ -2293,22 +2372,29 @@ function workHourRuleDateTime(rule) {
 }
 
 async function inspectSelectedWorkHours() {
-  const rows = [];
-  for (const id of selected) {
+  const selectedIds = [...selected];
+  const rowsByResource = new Array(selectedIds.length);
+  await runWithConcurrency(selectedIds, 6, async (id, index) => {
+    const resourceRows = [];
     const resource = resources.find(item => item.id === id);
-    if (!resource) continue;
+    if (!resource) { rowsByResource[index] = resourceRows; return; }
     if (!resource.calendarId) {
-      rows.push({ key: `${resource.id}:none`, resource, rule: null });
-      continue;
+      resourceRows.push({ key: `${resource.id}:none`, resource, rule: null });
+      rowsByResource[index] = resourceRows;
+      return;
     }
     const roots = await loadCalendarRules(resource.calendarId);
     const inspected = [];
-    for (const root of roots) inspected.push(await inspectOuterCalendarRule(root, Number(resource.timeZone == null ? -999 : resource.timeZone)));
+    for (const root of roots) {
+      throwIfActionCancelled();
+      inspected.push(await inspectOuterCalendarRule(root, Number(resource.timeZone == null ? -999 : resource.timeZone)));
+    }
     const working = inspected.filter(rule => rule.kind === "working");
-    if (working.length) working.forEach(rule => rows.push({ key: calendarRuleKey(resource, rule), resource, rule }));
-    else rows.push({ key: `${resource.id}:none`, resource, rule: null });
-  }
-  return rows;
+    if (working.length) working.forEach(rule => resourceRows.push({ key: calendarRuleKey(resource, rule), resource, rule }));
+    else resourceRows.push({ key: `${resource.id}:none`, resource, rule: null });
+    rowsByResource[index] = resourceRows;
+  }, completed => { $("whStatus").textContent = `Read ${completed} of ${selectedIds.length} resource calendar(s)…`; });
+  return rowsByResource.flatMap(rows => rows || []);
 }
 
 function selectedWorkHourResourceIds(rows) {
@@ -2369,6 +2455,7 @@ async function preview(mode) {
     PLAN = null; $("settingsApplyBtn").disabled = true; $("whApplyBtn").disabled = true;
     if (!selected.size) { ui.status.textContent = "Select at least one resource."; return; }
     const whInclude = mode === "workhours";
+    if (whInclude) beginCancellableAction("Work Hours preview");
     const fc = whInclude ? { patch: {}, clears: [], summary: [] } : collectFieldChanges();
     const whMode = document.querySelector('input[name="whMode"]:checked').value;
     if (!fc.summary.length && !whInclude) { ui.status.textContent = "Tick at least one setting."; return; }
@@ -2423,10 +2510,11 @@ async function preview(mode) {
     log(`Preview: ${selected.size} resource(s); ${fc.summary.length} field change(s)${whInclude ? "; work hours included" : ""}.` +
       (loc.block ? "  ⛔ Location rule conflict — apply blocked." : loc.warn ? `  ⚠ ${loc.bad} resource(s) would breach the Location rule.` : ""));
   } catch (e) {
-    log("✖ Preview failed: " + e.message);
-    ui.status.textContent = "Preview failed — see log.";
+    if (isActionCancellation(e)) { log("Work Hours preview cancelled."); ui.status.textContent = "Preview cancelled."; }
+    else { log("✖ Preview failed: " + e.message); ui.status.textContent = "Preview failed — see log."; }
   } finally {
     setBusy(false);
+    if (mode === "workhours") endCancellableAction();
   }
 }
 
@@ -2436,14 +2524,16 @@ async function applyAll(mode) {
   if (PLAN.mode !== mode) { ui.status.textContent = "Preview this section again first."; return; }
   if (!confirmTwice(ui.apply, mode === "workhours" ? "Apply Work Hours" : "Apply Settings")) return;
   try {
+    beginCancellableAction(mode === "workhours" ? "Work Hours update" : "Resource Settings update");
     lockRun(true);
     const ids = mode === "workhours" ? [...PLAN.whResourceIds] : [...selected];
     const hasFields = Object.keys(PLAN.patch).length || PLAN.clears.length;
     let ok = 0, err = 0;
-    log(`Applying to ${ids.length} resource(s)…`);
+    const concurrency = mode === "workhours" ? 4 : 6;
+    log(`Applying to ${ids.length} resource(s) with up to ${Math.min(concurrency, ids.length)} parallel worker(s)…`);
 
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i];
+    await runWithConcurrency(ids, concurrency, async id => {
+      throwIfActionCancelled();
       const r = resources.find(x => x.id === id);
       try {
         if (hasFields) {
@@ -2452,18 +2542,25 @@ async function applyAll(mode) {
         }
         if (PLAN.whInclude) await applyWorkHours(r);
         ok++;
-      } catch (e) { err++; log(`  ✖ ${r ? r.name : id}: ${e.message}`); }
-      if ((i + 1) % 5 === 0 || i === ids.length - 1) ui.status.textContent = `Applied ${ok}/${ids.length}${err ? ` (${err} error${err > 1 ? "s" : ""})` : ""}`;
-    }
+      } catch (e) {
+        if (isActionCancellation(e)) throw e;
+        err++; log(`  ✖ ${r ? r.name : id}: ${e.message}`);
+      }
+    }, completed => {
+      ui.status.textContent = `Completed ${completed}/${ids.length}: ${ok} applied${err ? `, ${err} error${err > 1 ? "s" : ""}` : ""}`;
+    });
     log(`Done. ${ok} succeeded, ${err} failed.`);
     notify("Update complete", `${ok} resource(s) updated${err ? `, ${err} failed` : ""}.`, err ? "warning" : "success");
     // refresh the grid so the new values show
     await loadResources();
   } catch (e) {
-    log("✖ Apply failed: " + e.message);
+    if (isActionCancellation(e)) {
+      log("Apply cancelled. Requests already completed were not rolled back.");
+      ui.status.textContent = "Cancelled. Completed changes were retained.";
+    } else log("✖ Apply failed: " + e.message);
   } finally {
     lockRun(false);
-    ui.apply.disabled = true; PLAN = null;
+    ui.apply.disabled = true; PLAN = null; endCancellableAction();
   }
 }
 
@@ -2635,6 +2732,7 @@ buildMultiPicker("orgUnitFilter", "All Organizational Units");
 buildMultiPicker("businessUnitFilter", "All Business Units");
 refreshThemeToggle();
 $("themeToggle").addEventListener("click", toggleTheme);
+$("cancelActionBtn").addEventListener("click", cancelCurrentAction);
 $("exportLogBtn").addEventListener("click", exportLogsCsv);
 $("clearLogBtn").addEventListener("click", clearLogs);
 $("loadBtn").addEventListener("click", loadResources);
