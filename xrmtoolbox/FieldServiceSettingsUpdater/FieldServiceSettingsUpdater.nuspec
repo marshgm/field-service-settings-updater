@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>MarkChristie.FieldServiceSettingsUpdater</id>
-    <version>3.6.0-beta</version>
+    <version>3.7.0-beta</version>
     <title>Field Service Resource Updater</title>
     <authors>Mark Christie</authors>
     <owners>Mark Christie</owners>
@@ -12,7 +12,7 @@
     <license type="expression">MIT</license>
     <description>Bulk-update Field Service Bookable Resource settings across many resources at once: Start/End Location, Organizational Unit, Display on Schedule Board, Enable for Availability Search, Hourly Rate and Time Off Approval; set work hours by weekly pattern or by copying another resource's calendar; and quick add/remove skills (characteristics) and territories for everyone selected. Preview every change before applying.</description>
     <summary>Bulk-edit Bookable Resource settings, work hours, skills and territories across many Field Service resources.</summary>
-    <releaseNotes>3.6 Beta — Add Select All, Clear All, Invert Selection, and Shift-click range selection to the Resource grid.</releaseNotes>
+    <releaseNotes>3.7 Beta — Add configurable parallel calendar export workers, deterministic output ordering, progress reporting, and transient Dataverse retry handling.</releaseNotes>
     <tags>XrmToolBox Plugin Dataverse Dynamics365 FieldService BookableResource Scheduling WorkHours Characteristics Territory BulkUpdate</tags>
     <dependencies>
       <dependency id="XrmToolBox" version="1.2025.7.71" />

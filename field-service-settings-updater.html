@@ -614,6 +614,17 @@
           <label><input type="checkbox" id="exportCalOther" checked /> Holidays / Exceptions</label>
         </div>
       </div>
+      <div style="max-width:260px;margin-top:12px">
+        <label for="exportConcurrency">Parallel Resources</label>
+        <select id="exportConcurrency" title="Number of resource calendars read concurrently">
+          <option value="2">2 - Conservative</option>
+          <option value="4">4</option>
+          <option value="6" selected>6 - Recommended</option>
+          <option value="8">8 - Faster</option>
+          <option value="10">10 - Aggressive</option>
+        </select>
+        <div class="hint">Reduce this value if Dataverse reports throttling.</div>
+      </div>
       <div class="btnbar">
         <button type="button" class="primary" id="exportCalendarRulesBtn">Export Working Hours &amp; Time Off</button>
         <span id="exportCalendarStatus" role="status" aria-live="polite"></span>
@@ -645,7 +656,7 @@
    D365 web resource (same-origin fetch). See docs/ARCHITECTURE.md.
    ============================================================================ */
 // Display version. Advance future feature builds through 2.1, 2.2, and so on.
-const APP_VERSION = "3.6 Beta";
+const APP_VERSION = "3.7 Beta";
 const API_VER = "v9.2";
 
 const PPTB = (typeof window !== "undefined") && !!window.dataverseAPI;
@@ -1978,15 +1989,56 @@ async function deleteSelectedCalendarRules() {
 async function loadCalendarDetailsAll(calId) {
   const id = guidValue(calId);
   if (!id) return null;
-  return await dvQuery(`calendars(${id})?$select=calendarid,name,description&$expand=calendar_calendar_rules`);
+  return await retryCalendarExportRead(() =>
+    dvQuery(`calendars(${id})?$select=calendarid,name,description&$expand=calendar_calendar_rules`));
 }
 
-async function loadResourceRegionNames(list) {
+function waitMs(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function retryCalendarExportRead(operation, maxAttempts = 4) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      lastError = error;
+      const transient = /(?:GET\s+)?(?:408|429|500|502|503|504)|throttl|rate.?limit|timeout|temporar/i.test(String(error && error.message));
+      if (!transient || attempt === maxAttempts) throw error;
+      const delay = Math.min(8000, 750 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 250);
+      await waitMs(delay);
+    }
+  }
+  throw lastError;
+}
+
+async function runWithConcurrency(items, concurrency, worker, onComplete) {
+  let nextIndex = 0;
+  let completed = 0;
+  const runner = async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      await worker(items[index], index);
+      completed++;
+      if (onComplete) onComplete(completed, items[index], index);
+    }
+  };
+  const count = Math.max(1, Math.min(Number(concurrency) || 1, items.length || 1));
+  await Promise.all(Array.from({ length: count }, runner));
+}
+
+async function loadResourceRegionNames(list, concurrency = 4) {
   const result = new Map(list.map(resource => [resource.id, []]));
   const territoryNames = new Map(territories.map(territory => [territory.id, territory.name]));
+  const batches = [];
   for (let i = 0; i < list.length; i += 20) {
-    const filter = list.slice(i, i + 20).map(resource => `_msdyn_resource_value eq ${resource.id}`).join(" or ");
-    const links = await dvQueryAll(`msdyn_resourceterritories?$select=_msdyn_resource_value,_msdyn_territory_value&$filter=${encodeURIComponent(filter)}`).catch(() => []);
+    batches.push(list.slice(i, i + 20));
+  }
+  await runWithConcurrency(batches, Math.min(4, concurrency), async batch => {
+    const filter = batch.map(resource => `_msdyn_resource_value eq ${resource.id}`).join(" or ");
+    const links = await retryCalendarExportRead(() =>
+      dvQueryAll(`msdyn_resourceterritories?$select=_msdyn_resource_value,_msdyn_territory_value&$filter=${encodeURIComponent(filter)}`)).catch(() => []);
     for (const link of links) {
       const resourceId = link._msdyn_resource_value;
       const territoryId = link._msdyn_territory_value;
@@ -1994,7 +2046,7 @@ async function loadResourceRegionNames(list) {
       const name = territoryNames.get(territoryId) || territoryId || "";
       if (name && !result.get(resourceId).includes(name)) result.get(resourceId).push(name);
     }
-  }
+  });
   return result;
 }
 
@@ -2103,20 +2155,21 @@ async function exportSelectedCalendarRules() {
   const kinds = calendarExportKindsSelected();
   if (!Object.values(kinds).some(Boolean)) { status.textContent = "Select at least one calendar entry type."; return; }
   const chosen = [...selected].map(id => resources.find(resource => resource.id === id)).filter(Boolean);
-  const output = [];
+  const concurrency = Math.max(1, Number($("exportConcurrency").value) || 6);
+  const rowsByResource = new Array(chosen.length);
   let failed = 0;
   try {
     setBusy(true);
     button.disabled = true;
     status.textContent = "Loading region assignments…";
-    const regions = await loadResourceRegionNames(chosen);
-    log(`Calendar export starting for ${chosen.length} selected resource(s).`);
-    for (let index = 0; index < chosen.length; index++) {
-      const resource = chosen[index];
-      status.textContent = `Reading ${index + 1} of ${chosen.length}: ${resource.name}…`;
+    const regions = await loadResourceRegionNames(chosen, concurrency);
+    log(`Calendar export starting for ${chosen.length} selected resource(s) with ${Math.min(concurrency, chosen.length)} parallel worker(s).`);
+    await runWithConcurrency(chosen, concurrency, async (resource, index) => {
+      const resourceRows = [];
       if (!resource.calendarId) {
         log("Skipped export because no calendar is assigned.", resource);
-        continue;
+        rowsByResource[index] = resourceRows;
+        return;
       }
       try {
         const parentCalendar = await loadCalendarDetailsAll(resource.calendarId);
@@ -2128,16 +2181,21 @@ async function exportSelectedCalendarRules() {
           const leaves = (innerCalendar && innerCalendar.calendar_calendar_rules) || [];
           const kind = calendarRuleKind(parent, leaves);
           if (!kinds[kind]) continue;
-          output.push(calendarRuleExportRow(resource, regions.get(resource.id), parent, parent, "Parent", kind, innerId));
-          leaves.forEach(leaf => output.push(calendarRuleExportRow(resource, regions.get(resource.id), parent, leaf, "Inner", kind, innerId)));
+          resourceRows.push(calendarRuleExportRow(resource, regions.get(resource.id), parent, parent, "Parent", kind, innerId));
+          leaves.forEach(leaf => resourceRows.push(calendarRuleExportRow(resource, regions.get(resource.id), parent, leaf, "Inner", kind, innerId)));
           exportedForResource += 1 + leaves.length;
         }
+        rowsByResource[index] = resourceRows;
         log(`Prepared ${exportedForResource} flattened calendar rule row(s) for export.`, resource);
       } catch (error) {
         failed++;
+        rowsByResource[index] = resourceRows;
         log(`Calendar export failed: ${error.message}`, resource);
       }
-    }
+    }, completed => {
+      status.textContent = `Read ${completed} of ${chosen.length} resource calendar(s)${failed ? `; ${failed} failed` : ""}…`;
+    });
+    const output = rowsByResource.flatMap(rows => rows || []);
     if (!output.length) {
       status.textContent = failed ? `No rows exported; ${failed} resource(s) failed.` : "No matching calendar rules found.";
       return;
