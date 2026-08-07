@@ -661,7 +661,7 @@
    D365 web resource (same-origin fetch). See docs/ARCHITECTURE.md.
    ============================================================================ */
 // Display version. Advance future feature builds through 2.1, 2.2, and so on.
-const APP_VERSION = "3.8 Beta";
+const APP_VERSION = "3.9 Beta";
 const API_VER = "v9.2";
 
 const PPTB = (typeof window !== "undefined") && !!window.dataverseAPI;
@@ -853,12 +853,52 @@ function headers(extra) {
   if (XTB && window.XTB_CONFIG.token) h["Authorization"] = "Bearer " + window.XTB_CONFIG.token;
   return Object.assign(h, extra || {});
 }
+let XTB_TOKEN_REFRESH_PROMISE = null;
+function refreshXtbAccessToken() {
+  if (!XTB || !window.chrome || !window.chrome.webview) return Promise.resolve(false);
+  if (XTB_TOKEN_REFRESH_PROMISE) return XTB_TOKEN_REFRESH_PROMISE;
+  XTB_TOKEN_REFRESH_PROMISE = new Promise(resolve => {
+    let finished = false;
+    const finish = result => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      window.removeEventListener("xtb-token-refresh-result", handler);
+      XTB_TOKEN_REFRESH_PROMISE = null;
+      resolve(result);
+    };
+    const handler = event => {
+      const detail = event.detail || {};
+      if (detail.ok) log("XrmToolBox authentication token refreshed; retrying interrupted Dataverse request.");
+      else log(`XrmToolBox token refresh failed: ${detail.message || "unknown error"}`);
+      finish(!!detail.ok);
+    };
+    const timer = setTimeout(() => {
+      log("XrmToolBox token refresh timed out after 30 seconds.");
+      finish(false);
+    }, 30000);
+    window.addEventListener("xtb-token-refresh-result", handler);
+    log("Dataverse returned 401; requesting a refreshed XrmToolBox access token…");
+    window.chrome.webview.postMessage("refresh-token");
+  });
+  return XTB_TOKEN_REFRESH_PROMISE;
+}
+async function authenticatedFetch(url, options) {
+  let response = await fetch(url, options);
+  if (response.status !== 401 || !XTB) return response;
+  if (!await refreshXtbAccessToken()) return response;
+  throwIfActionCancelled();
+  const retryHeaders = Object.assign({}, options && options.headers ? options.headers : {});
+  retryHeaders.Authorization = "Bearer " + window.XTB_CONFIG.token;
+  response = await fetch(url, Object.assign({}, options || {}, { headers: retryHeaders }));
+  return response;
+}
 function relPath(p) { const m = p.match(/\/api\/data\/v9\.\d+\/(.*)$/); return (m ? m[1] : p).replace(/^\//, ""); }
 
 // GET a query path like "bookableresources?$select=..." → { value: [...] } (single page).
 async function dvQuery(pathWithQuery, extraHeaders) {
   if (PPTB) return await window.dataverseAPI.queryData(relPath(pathWithQuery));
-  const r = await fetch(`${baseUrl()}/${relPath(pathWithQuery)}`, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin", signal: activeFetchSignal() });
+  const r = await authenticatedFetch(`${baseUrl()}/${relPath(pathWithQuery)}`, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin", signal: activeFetchSignal() });
   if (!r.ok) throw new Error(`GET ${r.status}: ${(await r.text()).slice(0, 300)}`);
   return r.json();
 }
@@ -871,7 +911,7 @@ async function dvQueryAll(pathWithQuery, extraHeaders) {
   }
   let url = `${baseUrl()}/${relPath(pathWithQuery)}`;
   while (url) {
-    const r = await fetch(url, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin", signal: activeFetchSignal() });
+    const r = await authenticatedFetch(url, { method: "GET", headers: headers(extraHeaders), credentials: "same-origin", signal: activeFetchSignal() });
     if (!r.ok) throw new Error(`GET ${r.status}: ${(await r.text()).slice(0, 300)}`);
     const d = await r.json();
     out.push(...(d.value || []));
@@ -881,42 +921,42 @@ async function dvQueryAll(pathWithQuery, extraHeaders) {
 }
 async function dvUpdate(logicalName, entitySet, id, patch) {
   if (PPTB) { await window.dataverseAPI.update(logicalName, id, patch); return; }
-  const r = await fetch(`${baseUrl()}/${entitySet}(${id})`, { method: "PATCH", credentials: "same-origin", headers: headers({ "If-Match": "*" }), body: JSON.stringify(patch), signal: activeFetchSignal() });
+  const r = await authenticatedFetch(`${baseUrl()}/${entitySet}(${id})`, { method: "PATCH", credentials: "same-origin", headers: headers({ "If-Match": "*" }), body: JSON.stringify(patch), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
 }
 async function dvCreate(logicalName, entitySet, record) {
   if (PPTB) { const res = await window.dataverseAPI.create(logicalName, record); return res && (res.id || res); }
-  const r = await fetch(`${baseUrl()}/${entitySet}`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify(record), signal: activeFetchSignal() });
+  const r = await authenticatedFetch(`${baseUrl()}/${entitySet}`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify(record), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
   const loc = r.headers.get("OData-EntityId") || "";
   const m = loc.match(/\(([0-9a-f-]{36})\)/i); return m ? m[1] : null;
 }
 async function dvDelete(logicalName, entitySet, id) {
   if (PPTB) { await window.dataverseAPI.delete(logicalName, id); return; }
-  const r = await fetch(`${baseUrl()}/${entitySet}(${id})`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
+  const r = await authenticatedFetch(`${baseUrl()}/${entitySet}(${id})`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
 }
 // Clear a single-valued lookup (web/XTB use the $ref DELETE; PPTB falls back to a null bind).
 async function dvClearLookup(logicalName, entitySet, id, navProperty, bindField) {
   if (PPTB) { await window.dataverseAPI.update(logicalName, id, { [bindField + "@odata.bind"]: null }); return; }
-  const r = await fetch(`${baseUrl()}/${entitySet}(${id})/${navProperty}/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
+  const r = await authenticatedFetch(`${baseUrl()}/${entitySet}(${id})/${navProperty}/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
   if (!r.ok && r.status !== 404) throw new Error(await errText(r));
 }
 // N:N associate / disassociate (e.g. systemuser ↔ role via systemuserroles_association).
 async function dvAssociate(pLogical, pSet, pId, rel, rLogical, rSet, rId) {
   if (PPTB) { await window.dataverseAPI.associate(pLogical, pId, rel, rLogical, rId); return; }
-  const r = await fetch(`${baseUrl()}/${pSet}(${pId})/${rel}/$ref`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify({ "@odata.id": `${baseUrl()}/${rSet}(${rId})` }), signal: activeFetchSignal() });
+  const r = await authenticatedFetch(`${baseUrl()}/${pSet}(${pId})/${rel}/$ref`, { method: "POST", credentials: "same-origin", headers: headers(), body: JSON.stringify({ "@odata.id": `${baseUrl()}/${rSet}(${rId})` }), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
 }
 async function dvDisassociate(pLogical, pSet, pId, rel, rSet, rId) {
   if (PPTB) { await window.dataverseAPI.disassociate(pLogical, pId, rel, rId); return; }
-  const r = await fetch(`${baseUrl()}/${pSet}(${pId})/${rel}(${rId})/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
+  const r = await authenticatedFetch(`${baseUrl()}/${pSet}(${pId})/${rel}(${rId})/$ref`, { method: "DELETE", credentials: "same-origin", headers: headers(), signal: activeFetchSignal() });
   if (!r.ok && r.status !== 404) throw new Error(await errText(r));
 }
 // Unbound action (e.g. msdyn_SaveCalendar / msdyn_DeleteCalendar / msdyn_LoadCalendars).
 async function dvAction(name, params) {
   if (PPTB) return await window.dataverseAPI.execute({ operationName: name, operationType: "action", parameters: params || {} });
-  const r = await fetch(`${baseUrl()}/${name}`, { method: "POST", credentials: "same-origin", headers: headers({ "Prefer": 'odata.include-annotations="*"' }), body: JSON.stringify(params || {}), signal: activeFetchSignal() });
+  const r = await authenticatedFetch(`${baseUrl()}/${name}`, { method: "POST", credentials: "same-origin", headers: headers({ "Prefer": 'odata.include-annotations="*"' }), body: JSON.stringify(params || {}), signal: activeFetchSignal() });
   if (!r.ok) throw new Error(await errText(r));
   const txt = await r.text(); return txt ? JSON.parse(txt) : {};
 }

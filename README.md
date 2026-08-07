@@ -82,6 +82,8 @@ The **Export Calendar Rules** section exports flattened parent and inner calenda
 
 Read-only Work Hours and Calendar Time Zone previews use up to six parallel resource readers. Work Hours and Calendar Time Zone updates use up to four parallel resource workers while preserving sequential operations within each individual calendar. The application header remains fixed while scrolling and displays the busy spinner plus a **Cancel Current Action** button. Cancellation aborts active browser requests where supported and otherwise stops cooperatively before the next resource or rule; changes completed before cancellation are not rolled back. Calendar-rule deletion remains sequential to avoid conflicting destructive operations.
 
+In the XrmToolBox host, a Dataverse `401` response triggers an in-place OAuth token refresh through the active `ServiceClient`. Concurrent failed requests share one refresh operation and retry once with the new token, allowing long-running exports and calendar updates to continue without reloading the tool or losing progress. A second `401` is reported normally because it may indicate a permissions or connection problem rather than token expiration.
+
 ## Using it
 
 ### Power Platform ToolBox
